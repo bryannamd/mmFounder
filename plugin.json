@@ -1,0 +1,42 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "mmfounder",
+  "version": "0.1.0",
+  "description": "사업을 열기 전에 시험하는 스킬 12개. 바깥 관점(RCF), 이사회, 경쟁자, 가상 구매자 패널, 가격, 오퍼, 재무, 마케팅, 브랜드, 운영, 출시, 사업계획서. 원화·부가세·한국 자료원 지원. Jakeschincariol/founder-skill 포크.",
+  "author": {
+    "name": "bryannamd",
+    "url": "https://github.com/bryannamd"
+  },
+  "homepage": "https://github.com/bryannamd/mmFounder",
+  "repository": "https://github.com/bryannamd/mmFounder",
+  "license": "MIT",
+  "keywords": [
+    "claude-code",
+    "codex",
+    "skills",
+    "startup",
+    "business-plan",
+    "unit-economics",
+    "market-validation",
+    "korean"
+  ],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "mmFounder",
+        "shortDescription": "사업을 열기 전에 시험하는 스킬 12개",
+        "longDescription": "바깥 관점(rcf)으로 기준값을 모으고, 이사회가 아이디어를 점검하고, 경쟁자를 조사하고, 가상 구매자 패널이 구매 여부와 이유를 알려 주고, 가격·오퍼·재무·마케팅·브랜드·운영·출시를 거쳐, 숫자로 계산한 판정이 붙은 사업계획서로 모읍니다. 원화와 부가세, 한국 자료원을 지원합니다. 가상 패널은 상한선이고 법률·세무 조언이 아닙니다.",
+        "developerName": "bryannamd",
+        "category": "Productivity",
+        "capabilities": [
+          "Instructions"
+        ],
+        "websiteURL": "https://github.com/bryannamd/mmFounder",
+        "defaultPrompt": [
+          "Use $mmfounder:founder-rcf to start with the outside view of my business.",
+          "Use $mmfounder:founder-board to put my business idea in front of the board."
+        ]
+      }
+    }
+  }
+}

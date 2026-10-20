@@ -95,6 +95,34 @@ Add a short section at the top of `founder/cfo.md`, in plain words:
 - Not financial, tax or legal advice. Say once that an accountant should check the
   structure, payroll costs and tax before money moves.
 
+## Currency and VAT
+
+`numbers.json` takes three more fields: `currency` (default `USD`; the report uses it, with `KRW` shown as
+`6,500원`), `price_includes_vat` (default `false`) and `vat_rate` (default `0.10`, used only when
+`price_includes_vat` is `true`). When `price` includes VAT the tool works from `net_price = price / (1 +
+vat_rate)`: revenue, contribution, margin and break-even are all on `net_price`, and the "One unit" table
+shows both prices. Enter `variable`, `fixed_monthly` and `startup` **without VAT** (a general taxpayer
+reclaims input VAT). The `--price` what-if follows the same setting. A simplified-tax taxpayer
+(간이과세자) is calculated differently: say in the note that an accountant must confirm. Example:
+`example.kr.json` in this folder (KRW, VAT included; the values are examples).
+
+## Check the ramp against the outside view
+
+If `founder/rcf.json` exists, run the comparison before you trust the ramp. It sets month 1 and month 3 of
+`ramp_per_day`, `plan_per_day`, the contribution share and the margin at plan against the reference class:
+
+```bash
+python3 "${CLAUDE_SKILL_DIR}/../founder-rcf/rcf.py" compare --rcf founder/rcf.json --numbers founder/numbers.json
+```
+
+A plan above the class's high end needs evidence (an `adjustments` entry in `rcf.json`) or a lower ramp.
+If `founder/rcf.json` does not exist, say so and offer `/founder-rcf`.
+
+## In Korea
+
+If `founder/locale.json` says `"country": "KR"`, also read `kr.md` in this skill's folder (`${CLAUDE_SKILL_DIR}/kr.md`) and follow it: VAT-inclusive prices, where Korean fees (card, delivery apps, open markets, app stores) and social insurance are checked, and the tax-status caveats.
+
+
 ## Output
 
 `founder/numbers.json`, `founder/cfo.md`, `founder/cfo-sources.md`. Next:

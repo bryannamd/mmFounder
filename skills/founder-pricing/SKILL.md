@@ -79,6 +79,21 @@ Write `founder/pricing.md`:
   long the CFO says the business can afford it.
 - No fake anchors: no "was $X" price that was never charged.
 
+## Currency and markets
+
+`van_westendorp.py` takes `--currency CODE` for the report currency (default: the panel's currency in
+`panel.json`, else `USD`); with `KRW` the price grid steps in 10 won. It strips `$`, `₩`, `원` and spaces from the answers. If the panel's `personas.json` holds
+more than one currency, `--market NAME` is required and only that market's buyers are used:
+
+```bash
+python3 "${CLAUDE_SKILL_DIR}/van_westendorp.py" founder/panel/answers --currency KRW --market Korea --price 6500
+```
+
+## In Korea
+
+If `founder/locale.json` says `"country": "KR"`, also read `kr.md` in this skill's folder (`${CLAUDE_SKILL_DIR}/kr.md`) and follow it: won pricing, VAT-inclusive consumer prices, and how to compare Korean competitor prices.
+
+
 ## Output
 
 `founder/pricing-curve.md`, `founder/pricing.md`. If the price changed, update

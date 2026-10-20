@@ -1,0 +1,4 @@
+interface:
+  display_name: "plan · 사업계획서"
+  short_description: "모든 결과를 하나로 모으고 숫자로 계산한 판정을 맨 위에 둡니다"
+  default_prompt: "Use $mmfounder:founder-plan to compile the business plan with the computed verdict."

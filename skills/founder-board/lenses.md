@@ -82,3 +82,34 @@ clear yet. Ask for it in one sentence.
 Questions this lens asks: What is the one thing? What does the first five minutes
 with this feel like for the customer? What would you cut? Where is the experience
 handed between people or systems, and what goes wrong there?
+
+## The Outside View lens
+
+Source: Daniel Kahneman, *Thinking, Fast and Slow* (2011), on the planning fallacy
+and the outside view, and Bent Flyvbjerg's work on reference class forecasting
+(for example, with Dan Gardner, *How Big Things Get Done*, 2023). Used only when
+`founder/rcf.md` exists.
+
+**Inside view and outside view.** The inside view builds a forecast from the plan:
+its steps, its strengths, its schedule. It is almost always too optimistic. The
+outside view asks how comparable ventures actually turned out and starts there.
+
+**Start from the base rate.** The reference class gives a first estimate. Move away
+from it only for evidence that this business differs in a way that matters, and
+only as far as the evidence reaches. Effort and enthusiasm are not evidence.
+
+**Check the class.** Is it a fair comparison? Too wide a class hides the
+differences that matter; too narrow a class has no data. Prefer a source you can
+name, with a date, over a vivid story.
+
+**Read the failures.** The reasons comparable businesses closed are a checklist of
+what to rule out. Ask which of them this plan has not addressed.
+
+**The plan against the class.** Where a number in the plan sits above the high end
+of the class (early sales, margin, the buy rate), the burden of proof is on the
+plan. Count what is supported by evidence and what is only hoped for.
+
+Questions this lens asks: Of businesses like this, how many are still open after a
+year? What do the survivors do that this plan does not? Which plan number is
+furthest above the class, and what evidence moves it? What would you see by month
+two that tells you to stop?

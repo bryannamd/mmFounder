@@ -1,18 +1,31 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
-  "name": "founder-skill",
-  "description": "The Founder skill pack for Claude",
+  "name": "mmfounder",
   "owner": {
-    "name": "Jake Schincariol",
-    "url": "https://opusjake.ai"
+    "name": "bryannamd",
+    "url": "https://github.com/bryannamd"
+  },
+  "metadata": {
+    "description": "사업을 열기 전에 시험하는 Claude Code·Codex 공용 스킬 묶음.",
+    "version": "0.1.0"
   },
   "plugins": [
     {
-      "name": "founder-skill",
-      "description": "Eleven Claude skills that test a business before you launch it: a board, a competitor scout, a consumer panel of 100 buyer agents, pricing, the offer, a CFO, marketing, brand, operations, a launch plan and the business plan.",
+      "name": "mmfounder",
       "source": "./",
+      "description": "사업을 열기 전에 시험하는 스킬 12개. 바깥 관점(RCF), 이사회, 경쟁자, 가상 구매자 패널, 가격, 오퍼, 재무, 마케팅, 브랜드, 운영, 출시, 사업계획서. 원화·부가세·한국 자료원 지원. Jakeschincariol/founder-skill 포크.",
       "category": "productivity",
-      "homepage": "https://github.com/Jakeschincariol/founder-skill"
+      "homepage": "https://github.com/bryannamd/mmFounder",
+      "tags": [
+        "claude-code",
+        "codex",
+        "skills",
+        "startup",
+        "business-plan",
+        "unit-economics",
+        "market-validation",
+        "korean"
+      ]
     }
   ]
 }

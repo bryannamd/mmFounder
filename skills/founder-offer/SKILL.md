@@ -68,6 +68,11 @@ moved, say so: the problem may be the market or the price, not the offer.
 - Follow the advertising and consumer-protection rules of the user's market for
   guarantees and claims (health claims especially). Not legal advice.
 
+## In Korea
+
+If `founder/locale.json` says `"country": "KR"`, also read `kr.md` in this skill's folder (`${CLAUDE_SKILL_DIR}/kr.md`) and follow it: the Korean e-commerce withdrawal rights that a guarantee must not undercut, advertising rules for claims and prices, and where to check them.
+
+
 ## Output
 
 `founder/offer.md` (problem list, the stack, costs, the value-equation scores, the

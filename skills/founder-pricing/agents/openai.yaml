@@ -1,0 +1,4 @@
+interface:
+  display_name: "pricing · 가격"
+  short_description: "패널의 가격 답으로 받아들일 가격대를 구하고 경쟁자·마진과 맞춰 봅니다"
+  default_prompt: "Use $mmfounder:founder-pricing to set my price from the panel, competitors and margin."

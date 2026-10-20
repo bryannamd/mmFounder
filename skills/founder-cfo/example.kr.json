@@ -1,0 +1,31 @@
+{
+  "business": "모스 말차 바 (예시: 가상의 테이크아웃 말차 카페. 모든 금액은 설명용 예시이며 실제 견적이 아니다)",
+  "unit": "cup",
+  "currency": "KRW",
+  "price": 6500,
+  "price_includes_vat": true,
+  "vat_rate": 0.10,
+  "variable": [
+    {"label": "말차 (2g)", "cost": 1000},
+    {"label": "귀리우유", "cost": 450},
+    {"label": "컵, 뚜껑, 빨대", "cost": 250},
+    {"label": "카드 수수료", "cost": 120}
+  ],
+  "fixed_monthly": [
+    {"label": "인건비", "cost": 10500000},
+    {"label": "임대료 + 관리비", "cost": 5000000},
+    {"label": "POS, 보험, 기타", "cost": 500000}
+  ],
+  "startup": [
+    {"label": "임대 보증금", "cost": 30000000},
+    {"label": "인테리어", "cost": 45000000},
+    {"label": "장비", "cost": 20000000},
+    {"label": "간판", "cost": 3000000},
+    {"label": "초도 재고", "cost": 2000000},
+    {"label": "오픈 광고", "cost": 3000000}
+  ],
+  "days_per_month": 30,
+  "capacity_per_day": 400,
+  "plan_per_day": 220,
+  "ramp_per_day": [90, 110, 130, 145, 160, 175, 185, 195, 205, 210, 215, 220]
+}

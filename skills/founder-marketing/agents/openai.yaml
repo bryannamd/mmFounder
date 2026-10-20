@@ -1,0 +1,4 @@
+interface:
+  display_name: "marketing · 마케팅"
+  short_description: "포지셔닝, 채널, 30일 캠페인, 고객 확보 한도를 짭니다"
+  default_prompt: "Use $mmfounder:founder-marketing to plan my marketing and the 30-day launch campaign."

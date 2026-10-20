@@ -70,6 +70,11 @@ Write `founder/competitors.md`:
    this skill can give.
 6. The threat: who could copy the new business fastest, and how.
 
+## In Korea
+
+If `founder/locale.json` says `"country": "KR"`, also read `kr.md` in this skill's folder (`${CLAUDE_SKILL_DIR}/kr.md`) and follow it: where to read Korean competitors (Naver Map and Kakao Map places and their reviews), how to tell sponsored reviews from real ones, and the official sources for shop counts and franchise filings.
+
+
 ## Output
 
 `founder/competitors.csv`, `founder/competitors.md`. Next: `/founder-consumer`

@@ -1,21 +1,22 @@
 {
-  "name": "founder-skill",
-  "description": "Eleven free Claude skills that test a business before you launch it: a board trained on Hormozi, Thiel and Jobs, a marketing director, a CFO, and a consumer panel of 100 buyer agents. Free, MIT.",
-  "version": "1.0.0",
+  "name": "mmfounder",
+  "version": "0.1.0",
+  "description": "사업을 열기 전에 시험하는 스킬 12개. 바깥 관점(RCF), 이사회, 경쟁자, 가상 구매자 패널, 가격, 오퍼, 재무, 마케팅, 브랜드, 운영, 출시, 사업계획서. 원화·부가세·한국 자료원 지원. Jakeschincariol/founder-skill 포크.",
   "author": {
-    "name": "Jake Schincariol",
-    "url": "https://opusjake.ai"
+    "name": "bryannamd",
+    "url": "https://github.com/bryannamd"
   },
-  "homepage": "https://github.com/Jakeschincariol/founder-skill",
-  "repository": "https://github.com/Jakeschincariol/founder-skill",
+  "homepage": "https://github.com/bryannamd/mmFounder",
+  "repository": "https://github.com/bryannamd/mmFounder",
   "license": "MIT",
   "keywords": [
     "claude-code",
-    "claude-skills",
+    "codex",
+    "skills",
     "startup",
     "business-plan",
     "unit-economics",
     "market-validation",
-    "subagents"
+    "korean"
   ]
 }

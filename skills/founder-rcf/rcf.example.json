@@ -1,0 +1,49 @@
+{
+  "business": "모스 말차 바 (예시: 가상의 테이크아웃 말차 카페. 아래 숫자는 모두 설명용 예시이며 실제 통계가 아니다)",
+  "example": true,
+  "reference_classes": [
+    {"level": 1, "name": "성수동 근처에서 개업 1년 이내인 테이크아웃 음료 전문점", "why": "같은 동네, 같은 판매 방식, 같은 시기"},
+    {"level": 2, "name": "서울의 비알코올 음료점(카페) 업종", "why": "같은 업종, 같은 도시의 임대료와 인건비"},
+    {"level": 3, "name": "전국 숙박·음식점업 신생 기업", "why": "가장 넓은 집단. 생존율 통계가 이 단위로 나온다"}
+  ],
+  "metrics": [
+    {"key": "survival_1y", "label": "1년 생존율", "class_level": 3,
+     "value": 0.65, "low": null, "high": null, "unit": "ratio",
+     "source": "https://kosis.kr", "source_title": "Example only (illustrative)", "source_date": "2024",
+     "note": "illustrative: this number was not taken from this source. Look up the real figure there and replace it."},
+    {"key": "ramp_month1_per_day", "label": "첫 달 하루 판매량", "class_level": 1,
+     "value": 70, "low": 40, "high": 100, "unit": "cups_per_day",
+     "source": "https://kosis.kr", "source_title": "Example only (illustrative)", "source_date": "2024",
+     "note": "illustrative: this number was not taken from this source."},
+    {"key": "ramp_month3_per_day", "label": "셋째 달 하루 판매량", "class_level": 1,
+     "value": 100, "low": 60, "high": 120, "unit": "cups_per_day",
+     "source": "https://kosis.kr", "source_title": "Example only (illustrative)", "source_date": "2024",
+     "note": "illustrative: this number was not taken from this source."},
+    {"key": "plan_per_day", "label": "안정기 하루 판매량", "class_level": 1,
+     "value": 180, "low": null, "high": null, "unit": "cups_per_day",
+     "source": "https://kosis.kr", "source_title": "Example only (illustrative)", "source_date": "2024",
+     "note": "illustrative: this number was not taken from this source."},
+    {"key": "contribution_pct", "label": "공헌이익률", "class_level": 2,
+     "value": 0.65, "low": 0.55, "high": 0.72, "unit": "ratio",
+     "source": "https://kosis.kr", "source_title": "Example only (illustrative)", "source_date": "2024",
+     "note": "illustrative: this number was not taken from this source."},
+    {"key": "margin_at_plan", "label": "계획 판매량에서 영업이익률", "class_level": 2,
+     "value": 0.15, "low": 0.05, "high": 0.30, "unit": "ratio",
+     "source": "https://kosis.kr", "source_title": "Example only (illustrative)", "source_date": "2024",
+     "note": "illustrative: this number was not taken from this source."},
+    {"key": "buy_rate", "label": "방문객 구매 전환율", "class_level": 1,
+     "value": 0.20, "low": null, "high": null, "unit": "ratio",
+     "source": "https://kosis.kr", "source_title": "Example only (illustrative)", "source_date": "2024",
+     "note": "illustrative: this number was not taken from this source."}
+  ],
+  "failure_reasons": [
+    {"reason": "예시: 임대료에 비해 하루 판매량이 오르지 않음", "source": "https://kosis.kr"}
+  ],
+  "adjustments": [
+    {"metric": "ramp_month3_per_day", "direction": "better",
+     "evidence": "예시: 오픈 전 사전 예약 쿠폰 300장을 팔았고, 회사 두 곳과 단체 주문 계약을 맺었다"}
+  ],
+  "kill_criteria": [
+    {"metric": "units_per_day_month2", "below": 100, "action": "가격과 오퍼를 다시 검토한다"}
+  ]
+}

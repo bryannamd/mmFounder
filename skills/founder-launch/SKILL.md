@@ -59,6 +59,16 @@ The weekly numbers to track (from the CFO: units a day against break-even; from
 marketing: the channel numbers), the level that triggers a change, and a review on
 days 7, 14 and 30 with the questions to answer.
 
+## Kill criteria from the outside view
+
+If `founder/rcf.json` has `kill_criteria`, put them into the 30-day review as the levels that mean stop or
+change course, each with its action. Loosening one needs a written reason in `founder/launch.md`.
+
+## In Korea
+
+If `founder/locale.json` says `"country": "KR"`, also read `kr.md` in this skill's folder (`${CLAUDE_SKILL_DIR}/kr.md`) and follow it: consent for personal data on pre-order and waitlist lists, mail-order rules for pre-sales, and checks for pop-ups.
+
+
 ## Output
 
 `founder/launch.md` with the test, the countdown, the run sheet and the 30-day

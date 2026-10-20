@@ -36,6 +36,19 @@ prints the verdict and each check. The checks, all computed:
 3. The break-even fits inside capacity, if a capacity was given.
 4. Enough simulated buyers buy (`founder/panel/results.json`; default bar 25%,
    change it with `--min-buy-rate` and say why).
+5. A buyer panel has run. If `founder/panel/results.json` is missing, this check
+   fails ("No buyer panel yet: run /founder-consumer") and the verdict cannot be
+   Profitable.
+6. The outside view passes its check (`founder/rcf.json`, `rcf.py check`). If the
+   file is missing, this check fails ("No outside view yet: run /founder-rcf").
+   A file marked `"example": true` fails too: example numbers never pass a plan.
+7. No optimism check fails: no plan number sits above the reference class's high
+   end without evidence in `adjustments`. A plan number above the class median with
+   no range is only a warning. An optimism backed by evidence is shown as such.
+
+Amounts in the plan use the `currency` in `founder/numbers.json`. If
+`founder/numbers.json` is invalid, the tool prints one line starting with `error:`
+and exits with code 2.
 
 If there are no numbers, the verdict is Incomplete: offer to run `/founder-cfo`.
 List the other missing sections with the skill that fills each. Do not fill a
@@ -62,9 +75,9 @@ python3 "${CLAUDE_SKILL_DIR}/compile.py" --dir founder
 ```
 
 writes `founder/business-plan.md`: title, the verdict and its checks, the key numbers
-table, the idea, then every section the pack produced (summary, board, competition,
-panel, pricing, offer, numbers, marketing, brand, operations, launch), and what is
-not done yet.
+table, the idea, then every section the pack produced (summary, the outside view,
+board, competition, panel, pricing, offer, numbers, marketing, brand, operations,
+launch), and what is not done yet.
 
 ## Step 4: the one-pager
 

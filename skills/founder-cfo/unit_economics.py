@@ -15,7 +15,7 @@ The input (see example.json in this folder):
 
     business          name, for the report
     unit              what you sell one of: "cup", "order", "client-month"
-    price             price per unit, before tax
+    price             price per unit, before tax (or including VAT, see below)
     variable          [{label, cost}]  cost of ONE unit: ingredients, packaging,
                       shipping, card fees, a per-unit commission
     fixed_monthly     [{label, cost}]  costs you pay every month whatever you sell:
@@ -26,12 +26,27 @@ The input (see example.json in this folder):
     plan_per_day      the volume you plan for once you are up and running
     ramp_per_day      12 numbers: units a day in each month of year 1
                       (optional; default = plan_per_day every month)
+    currency          the report's currency code (default "USD"): USD, CAD,
+                      EUR, GBP, JPY, KRW; any other code prints as "CODE 1,234.50"
+    price_includes_vat  true if 'price' is the shelf price with VAT in it
+                      (default false)
+    vat_rate          VAT rate when price_includes_vat is true (default 0.10)
+
+With price_includes_vat, revenue, contribution, margin and break-even all use the
+price before VAT: price / (1 + vat_rate). Enter variable, fixed_monthly and
+startup costs before VAT too (a general VAT payer gets the input VAT back). A
+simplified VAT payer works differently: check those numbers with a tax accountant.
 
 Every number in the report comes from that file. Nothing is looked up or
 guessed. If a field is missing the tool says so instead of filling it in.
 
 --price and --volume run a what-if without editing the file: --price replaces
-the price, --volume scales every volume (0.8 = 20 percent fewer sales).
+the price, --volume scales every volume (0.8 = 20 percent fewer sales). --price
+follows the file's price_includes_vat setting.
+
+money() is the one place amounts are formatted. The other founder tools load this
+file and call it, so every report shows money the same way: the full amount with
+thousands separators, never shortened to K or M.
 """
 
 import argparse
@@ -44,14 +59,33 @@ class NumbersError(Exception):
     pass
 
 
-def _money(v):
-    sign = "-" if v < 0 else ""
-    return "%s$%s" % (sign, "{:,.2f}".format(abs(v)))
+# code: (before the number, after the number, decimals)
+CURRENCIES = {
+    "USD": ("$", "", 2), "CAD": ("$", "", 2), "EUR": ("€", "", 2), "GBP": ("£", "", 2),
+    "JPY": ("¥", "", 0), "KRW": ("", "원", 0),
+}
 
 
-def _whole(v):
+def money(v, currency="USD", whole=False):
+    """The full amount with thousands separators: $1,234.50, 6,500원, -¥1,235, CHF 1,234.50."""
+    code = (currency or "USD").upper()
+    before, after, places = CURRENCIES.get(code, (code + " ", "", 2))
+    if whole:
+        places = 0
     sign = "-" if v < 0 else ""
-    return "%s$%s" % (sign, "{:,.0f}".format(abs(round(v))))
+    if places == 0:
+        num = "{:,.0f}".format(abs(round(v)))
+    else:
+        num = "{:,.{p}f}".format(abs(v), p=places)
+    return "%s%s%s%s" % (sign, before, num, after)
+
+
+def _money(v, currency="USD"):
+    return money(v, currency)
+
+
+def _whole(v, currency="USD"):
+    return money(v, currency, whole=True)
 
 
 def _sum(items, field):
@@ -81,9 +115,29 @@ def analyse(spec, price=None, volume=1.0):
     if "price" not in spec and price is None:
         raise NumbersError("'price' is missing")
     p = float(price if price is not None else spec["price"])
-    if p <= 0:
+    if not (math.isfinite(p) and p > 0):
         raise NumbersError("price must be above zero")
+    cur = spec.get("currency", "USD")
+    if not isinstance(cur, str) or not cur.strip():
+        raise NumbersError("'currency' must be a code such as \"USD\" or \"KRW\"")
+    cur = cur.strip().upper()
+    incl_vat = spec.get("price_includes_vat", False)
+    if not isinstance(incl_vat, bool):
+        raise NumbersError("'price_includes_vat' must be true or false")
+    vat = 0.0
+    if incl_vat:
+        try:
+            vat = float(spec.get("vat_rate", 0.10))
+        except (TypeError, ValueError):
+            raise NumbersError("'vat_rate' is not a number: %r" % spec.get("vat_rate"))
+        if not 0 <= vat < 1:
+            raise NumbersError("'vat_rate' must be a share such as 0.10, not %r" % spec.get("vat_rate"))
+    shelf = p
+    # every sum below runs on the price before VAT: the VAT is not the business's money
+    p = shelf / (1 + vat)
     days = float(spec.get("days_per_month", 30))
+    if not (math.isfinite(days) and days > 0):
+        raise NumbersError("'days_per_month' must be above zero")
     var = _sum(spec.get("variable"), "variable")
     fixed = _sum(spec.get("fixed_monthly"), "fixed_monthly")
     startup = _sum(spec.get("startup"), "startup")
@@ -136,13 +190,13 @@ def analyse(spec, price=None, volume=1.0):
     if capacity is not None and plan > float(capacity):
         flags.append("The plan (%.0f a day) is above capacity (%s)." % (plan, capacity))
     if year_profit < 0:
-        flags.append("Year 1 loses money on operations (%s)." % _whole(year_profit))
+        flags.append("Year 1 loses money on operations (%s)." % _whole(year_profit, cur))
     if payback_month is None:
         flags.append("The startup spend is not earned back within year 1.")
 
     return {
         "business": spec.get("business", ""), "unit": spec.get("unit", "unit"),
-        "price": p, "variable_per_unit": var, "contribution": contribution,
+        "price": shelf, "variable_per_unit": var, "contribution": contribution,
         "contribution_pct": contribution_pct, "fixed_monthly": fixed, "startup": startup,
         "plan_per_day": plan, "margin_at_plan": margin_at_plan, "breakeven_per_day": breakeven_day,
         "capacity_per_day": capacity, "year1_revenue": year_revenue, "year1_profit": year_profit,
@@ -150,6 +204,7 @@ def analyse(spec, price=None, volume=1.0):
         "cash_needed": cash_needed, "months": months, "flags": flags,
         "variable_items": spec.get("variable", []), "fixed_items": spec.get("fixed_monthly", []),
         "startup_items": spec.get("startup", []),
+        "currency": cur, "price_includes_vat": incl_vat, "vat_rate": vat, "net_price": p,
     }
 
 
@@ -168,6 +223,9 @@ def sensitivity(spec):
 
 def report(spec, a):
     u = a["unit"]
+    cur = a["currency"]
+    _money = lambda v: money(v, cur)
+    _whole = lambda v: money(v, cur, whole=True)
     L = []
     L.append("# Unit economics: %s" % (a["business"] or "your business"))
     L.append("")
@@ -177,12 +235,21 @@ def report(spec, a):
     L.append("")
     L.append("| line | per %s |" % u)
     L.append("| --- | ---: |")
-    L.append("| Price | %s |" % _money(a["price"]))
+    if a["price_includes_vat"]:
+        L.append("| Price (incl. %.0f%% VAT) | %s |" % (a["vat_rate"] * 100, _money(a["price"])))
+        L.append("| Price before VAT (what the business keeps) | %s |" % _money(a["net_price"]))
+    else:
+        L.append("| Price | %s |" % _money(a["price"]))
     for it in a["variable_items"]:
         L.append("| %s | -%s |" % (it.get("label", "cost"), _money(float(it["cost"]))))
     L.append("| **Contribution** (what each %s leaves to pay the fixed costs) | **%s** (%.0f%%) |"
              % (u, _money(a["contribution"]), a["contribution_pct"] * 100))
     L.append("")
+    if a["price_includes_vat"]:
+        L.append("Revenue, contribution, margin and break-even use the price before VAT. Costs are read as before VAT"
+                 " (a general VAT payer gets the input VAT back). A simplified VAT payer (간이과세자) works"
+                 " differently: check these numbers with a tax accountant (세무사).")
+        L.append("")
     L.append("## The margin that matters")
     L.append("")
     L.append("Fixed costs: %s a month (%s)." % (_whole(a["fixed_monthly"]), ", ".join(
@@ -253,6 +320,10 @@ def main(argv=None):
         return 2
     if args.json:
         out = {k: v for k, v in a.items() if not k.endswith("_items")}
+        if a["currency"] == "USD" and not a["price_includes_vat"]:
+            # with no currency or VAT set, print exactly the fields the original tool printed
+            for k in ("currency", "price_includes_vat", "vat_rate", "net_price"):
+                del out[k]
         out["breakeven_per_day"] = None if math.isinf(out["breakeven_per_day"]) else out["breakeven_per_day"]
         print(json.dumps(out, indent=1))
         return 0

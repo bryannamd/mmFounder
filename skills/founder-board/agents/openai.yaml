@@ -1,0 +1,4 @@
+interface:
+  display_name: "board · 이사회"
+  short_description: "아이디어를 이사회 위원들 앞에 올려 점수와 표결을 받습니다"
+  default_prompt: "Use $mmfounder:founder-board to put my business idea in front of the board and get a vote."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "cfo · 재무"
+  short_description: "한 건당 이익, 손익분기, 첫해 월별 손익, 필요한 현금을 계산합니다"
+  default_prompt: "Use $mmfounder:founder-cfo to run the unit economics for my business."

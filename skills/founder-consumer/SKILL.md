@@ -119,6 +119,22 @@ month, a reason code, the reason in their own voice, their main objection, what
 would change their mind, and four price answers (too cheap, a bargain, getting
 expensive, too expensive). Never edit a brief for one buyer.
 
+## Markets, language and currency
+
+`customer.json` can also carry `language` (`en` or `ko`, default `en`), `currency` (default `USD`) and
+`markets`. With `language: "ko"` the buyers' briefs and answers are in Korean (the `reason_code` stays an
+English code) and income and price answers are in the currency. With `markets` (each with `name`, `country`,
+`language`, `currency`, `share`, optional per-market overrides of `target`, `age`, `segments`, `behaviours`,
+`objections`, `habits`, and an optional `pitch`) the panel is split by market, every card carries its market,
+and `results.md` adds a `by_market` table. Income bands are cut per market; amounts in different currencies
+are never mixed on one line. Without any of these the panel is exactly the original. Examples:
+`customer.kr.example.json` and `pitch.kr.example.md` in this folder (a Korean café; the values are examples).
+
+## In Korea
+
+If `founder/locale.json` says `"country": "KR"`, also read `kr.md` in this skill's folder (`${CLAUDE_SKILL_DIR}/kr.md`) and follow it: a `markets` setup, why a Korean buyer simulated by an AI is a stereotype risk and real customer data comes first, and a few Korean buying behaviours as examples only.
+
+
 ## Output
 
 `founder/customer.json`, `founder/pitch.md`, `founder/panel/` (cards, briefs,

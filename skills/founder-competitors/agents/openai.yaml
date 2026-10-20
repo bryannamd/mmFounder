@@ -1,0 +1,4 @@
+interface:
+  display_name: "competitors · 경쟁자 지도"
+  short_description: "직접·간접 경쟁자와 대체재를 출처와 함께 정리하고 빈틈을 찾습니다"
+  default_prompt: "Use $mmfounder:founder-competitors to map my competitors and the gap they leave."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "launch · 출시"
+  short_description: "값싼 실제 시험부터 시작해 날짜별 출시 계획과 30일 점검을 만듭니다"
+  default_prompt: "Use $mmfounder:founder-launch to build my launch plan, starting with a cheap real test."

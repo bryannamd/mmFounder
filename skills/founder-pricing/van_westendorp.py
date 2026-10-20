@@ -9,6 +9,8 @@ that leaves the fewest people unhappy.
     python3 van_westendorp.py founder/panel/answers
     python3 van_westendorp.py prices.csv --out founder/pricing-curve.md
     python3 van_westendorp.py founder/panel/answers --json
+    python3 van_westendorp.py founder/panel/answers --currency KRW
+    python3 van_westendorp.py founder/panel/answers --market Korea
 
 Input is either the panel's answers folder (one JSON per buyer, written by
 founder-consumer) or a CSV with the columns too_cheap, cheap, expensive,
@@ -23,6 +25,11 @@ The four points it reports:
     OPP  optimal price point            as many say "too cheap" as "too expensive"
     IPP  indifference price point       as many say "a bargain" as "expensive"
 
+--currency sets how prices are shown (default: the panel's currency, else USD;
+KRW prices are read on a grid that steps in 10 won). If the panel next to the
+answers folder (../personas.json) deals buyers in more than one currency, --market NAME is required and only that
+market's buyers are counted: prices in different currencies cannot share a curve.
+
 PMC to PME is the acceptable range. These are answers from simulated buyers:
 use the range to choose what to TEST, then test it with real ones.
 """
@@ -32,8 +39,10 @@ import csv
 import glob
 import json
 import os
+import importlib.util
 import sys
 
+HERE = os.path.dirname(os.path.abspath(__file__))
 KEYS = ("too_cheap", "cheap", "expensive", "too_expensive")
 
 
@@ -41,19 +50,67 @@ class PricingError(Exception):
     pass
 
 
+def _load_unit_economics():
+    path = os.path.join(HERE, "..", "founder-cfo", "unit_economics.py")
+    spec = importlib.util.spec_from_file_location("founder_unit_economics", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+money = _load_unit_economics().money
+
+
 def _f(v):
     try:
-        x = float(str(v).replace("$", "").replace(",", "").strip())
+        x = float(str(v).replace("$", "").replace("₩", "").replace("원", "").replace(",", "").replace(" ", "").strip())
     except (TypeError, ValueError):
         return None
     return x if x > 0 else None
 
 
-def read(path):
+def _panel_currency(path):
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(path)), "panel.json"), encoding="utf-8") as fh:
+            return json.load(fh)["customer"].get("currency")
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return None
+
+
+def _market_ids(path, market):
+    """The buyer ids to count, or None for all. Reads the panel's personas.json next to the answers folder."""
+    pp = os.path.join(os.path.dirname(os.path.abspath(path)), "personas.json")
+    cards = []
+    if os.path.exists(pp):
+        try:
+            with open(pp, encoding="utf-8") as fh:
+                cards = json.load(fh)
+        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            raise PricingError("%s is not valid JSON: %s" % (pp, e))
+    currencies = sorted({c["currency"] for c in cards if c.get("currency")})
+    if market is None:
+        if len(currencies) > 1:
+            markets = sorted({c["market"] for c in cards if c.get("market")})
+            raise PricingError("this panel has buyers in %s: give --market (one of %s)" % (
+                ", ".join(currencies), ", ".join(markets)))
+        # one currency: the cards' own, else the customer's in panel.json
+        return None, currencies[0] if currencies else _panel_currency(path)
+    picked = [c for c in cards if c.get("market") == market]
+    if not picked:
+        raise PricingError("no buyers in market %r (looked in %s)" % (market, pp))
+    return {c["id"] for c in picked}, picked[0].get("currency")
+
+
+def read(path, market=None):
     """Return (rows, dropped) where rows are (too_cheap, cheap, expensive, too_expensive)."""
+    if market is not None and not os.path.isdir(path):
+        raise PricingError("--market works on a panel's answers folder, not a CSV")
     raw = []
     if os.path.isdir(path):
+        ids, _ = _market_ids(path, market)
         for fp in sorted(glob.glob(os.path.join(path, "*.json"))):
+            if ids is not None and os.path.splitext(os.path.basename(fp))[0] not in ids:
+                continue
             try:
                 with open(fp, encoding="utf-8") as fh:
                     a = json.load(fh)
@@ -98,11 +155,14 @@ def cross(grid, falling, rising):
     return None
 
 
-def analyse(rows, step=None):
+def analyse(rows, step=None, currency="USD"):
     if len(rows) < 5:
         raise PricingError("need at least 5 complete answers (got %d)" % len(rows))
     lo = min(r[0] for r in rows)
     hi = max(r[3] for r in rows)
+    if (currency or "USD").upper() == "KRW":
+        # nobody prices in fractions of a won: step in whole 10 won
+        step = step or max(10, int(round((hi - lo) / 400, -1)))
     step = step or max(0.01, round((hi - lo) / 400, 2))
     grid, p = [], lo
     while p <= hi + 1e-9:
@@ -121,8 +181,8 @@ def analyse(rows, step=None):
             "median": {k: sorted(r[i] for r in rows)[len(rows) // 2] for i, k in enumerate(KEYS)}}
 
 
-def report(res, dropped, price=None):
-    m = lambda v: "n/a" if v is None else "$%.2f" % v
+def report(res, dropped, price=None, currency="USD"):
+    m = lambda v: "n/a" if v is None else money(v, currency)
     p = res["points"]
     L = ["# Price sensitivity", "",
          "%d complete answers%s. Simulated buyers: use this to pick what to test, not as the final word." % (
@@ -148,17 +208,24 @@ def main(argv=None):
     ap.add_argument("--price", type=float, help="your current price, to place it on the range")
     ap.add_argument("--out", help="write the report here (markdown)")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--currency", help="currency code for the report (default: the panel's currency, else USD)")
+    ap.add_argument("--market", help="count only this market's buyers (needed when the panel mixes currencies)")
     a = ap.parse_args(argv)
     try:
-        rows, dropped = read(a.source)
-        res = analyse(rows)
+        currency = a.currency
+        if os.path.isdir(a.source):
+            _, market_currency = _market_ids(a.source, a.market)
+            currency = currency or market_currency
+        currency = (currency or "USD").upper()
+        rows, dropped = read(a.source, a.market)
+        res = analyse(rows, currency=currency)
     except (PricingError, FileNotFoundError) as e:
         print("error: %s" % e, file=sys.stderr)
         return 2
     if a.json:
         print(json.dumps(dict(res, dropped=dropped), indent=1))
         return 0
-    text = report(res, dropped, a.price)
+    text = report(res, dropped, a.price, currency)
     if a.out:
         with open(a.out, "w", encoding="utf-8") as fh:
             fh.write(text)

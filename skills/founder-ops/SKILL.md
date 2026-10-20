@@ -64,6 +64,11 @@ The ten things most likely to go wrong (a supplier runs out, a key person is sic
 the card terminal fails, a bad review, a slow month), each with how likely, how
 bad, and the plan.
 
+## In Korea
+
+If `founder/locale.json` says `"country": "KR"`, also read `kr.md` in this skill's folder (`${CLAUDE_SKILL_DIR}/kr.md`) and follow it: business registration, the mail-order business report, restaurant licences and hygiene steps, signage, and insurance for crowded-premises businesses.
+
+
 ## Output
 
 `founder/ops.md`, plus updated `founder/numbers.json` if real costs changed. Next:

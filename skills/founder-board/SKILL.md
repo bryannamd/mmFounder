@@ -47,6 +47,21 @@ If the name, the customer, the product or the price is missing, ask for those (a
 most three questions in one message), then write the file. Do not invent a
 budget, a market size or a competitor.
 
+**Country, language and currency.** Ask where the business will sell (one more
+question, in the same message). If it is not the US, English and US dollars, write
+`founder/locale.json` so the other skills know:
+
+```json
+{"country": "KR", "language": "ko", "currency": "KRW", "price_includes_vat": true, "vat_rate": 0.10}
+```
+
+`country` is the ISO code, `language` is `en` or `ko`, `price_includes_vat` is
+whether shelf prices include sales tax or VAT, and `vat_rate` is that rate (only
+needed when it does). For Korea use the values above. The skills read this file;
+the Python tools do not. Without the file everything works as before, in US
+dollars and English. If `founder/rcf.md` does not exist yet, offer `/founder-rcf`
+before the board meets: the base rates make the board's questions sharper.
+
 ## Step 1: brief the board
 
 Write `founder/board/brief.md`: the idea file plus anything else the user said
@@ -72,6 +87,14 @@ Score: <1-10> | Vote: FUND / FUND IF / PASS
 ## The questions I would ask the founder
 ## If FUND IF: the conditions
 ```
+
+### The fourth seat: the Outside View lens
+
+If `founder/rcf.md` exists, launch a fourth sub-agent in the same message, told:
+`Read founder/board/brief.md, founder/rcf.md and founder-board's lenses.md, apply
+ONLY the Outside View lens, and write your memo to founder/board/outside-view.md.`
+It uses the same memo shape and a vote. The chair reads four memos instead of three.
+If `founder/rcf.md` does not exist, the board stays at three.
 
 ## Step 3: the chair's summary
 
@@ -105,7 +128,7 @@ simulated buyers.
 ## Where the pack goes next
 
 ```
-board -> competitors -> consumer -> pricing -> offer -> cfo -> marketing -> brand -> ops -> launch -> plan
+rcf -> board -> competitors -> consumer -> pricing -> offer -> cfo -> marketing -> brand -> ops -> launch -> plan
 ```
 
 Every skill can also run on its own; each reads whatever is already in `founder/`.

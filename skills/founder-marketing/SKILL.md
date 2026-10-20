@@ -75,6 +75,11 @@ plus 16: what goes out each day, on which channel, with the message. Include:
 - Disclose paid partnerships. Follow the advertising rules for claims in the user's
   market (health and earnings claims especially). Not legal advice.
 
+## In Korea
+
+If `founder/locale.json` says `"country": "KR"`, also read `kr.md` in this skill's folder (`${CLAUDE_SKILL_DIR}/kr.md`) and follow it: Korean channels and the Fair Trade Commission's endorsement and testimonial guideline (disclosing paid or sponsored posts).
+
+
 ## Output
 
 `founder/marketing.md`. Next: `/founder-brand`, then `/founder-launch`.

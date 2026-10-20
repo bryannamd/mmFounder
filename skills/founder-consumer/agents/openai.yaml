@@ -1,0 +1,4 @@
+interface:
+  display_name: "consumer · 구매자 패널"
+  short_description: "가상 구매자 100명에게 같은 제안을 보여 주고 구매 여부와 이유를 모읍니다"
+  default_prompt: "Use $mmfounder:founder-consumer to run the simulated buyer panel on my pitch."

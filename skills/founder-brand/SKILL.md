@@ -65,6 +65,11 @@ and nothing is registered until the user registers it.
 - No fonts, images or icons the user has no right to use.
 - Not legal advice on trademarks.
 
+## In Korea
+
+If `founder/locale.json` says `"country": "KR"`, also read `kr.md` in this skill's folder (`${CLAUDE_SKILL_DIR}/kr.md`) and follow it: KIPRIS trademark search and Nice classes, `.kr` and `.co.kr` domain checks through KISA, and name checks on Naver, Kakao and the map services.
+
+
 ## Output
 
 `founder/brand.md`. Next: `/founder-ops` and `/founder-launch`.

@@ -1,0 +1,4 @@
+interface:
+  display_name: "brand · 브랜드"
+  short_description: "이름 후보와 상표·도메인 확인, 말투, 약속, 디자인 브리프를 만듭니다"
+  default_prompt: "Use $mmfounder:founder-brand to name and brief my brand."

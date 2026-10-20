@@ -1,0 +1,4 @@
+interface:
+  display_name: "rcf · 바깥 관점"
+  short_description: "비슷한 사업이 실제로 어땠는지 기준값으로 계획을 먼저 점검합니다"
+  default_prompt: "Use $mmfounder:founder-rcf to run the outside view (reference class forecasting) for my business before the rest of the pack."
