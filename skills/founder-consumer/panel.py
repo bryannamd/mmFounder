@@ -417,12 +417,12 @@ def _num(v):
         return None
 
 
-def tally(d):
+def tally(d, answers="answers"):
     state, cards = load_state(d)
     by_id = {c["id"]: c for c in cards}
     rows, skipped = [], []
     for c in cards:
-        path = _path(d, "answers", c["id"] + ".json")
+        path = _path(d, answers, c["id"] + ".json")
         p = _answer_ok(path, c["id"])
         if p:
             skipped.append((c["id"], p))

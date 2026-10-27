@@ -1,0 +1,160 @@
+{
+ "id": "P012",
+ "buys": false,
+ "reason_code": "habit",
+ "reason": "",
+ "objection": "",
+ "would_change_my_mind": "",
+ "price_too_cheap": 3000.0,
+ "price_cheap": 9588.888888888889,
+ "price_expensive": 15583.333333333334,
+ "price_too_expensive": 31590.909090909092,
+ "jev": {
+  "model": "jev-1.14.0",
+  "p_buy": 0.43,
+  "reason_probabilities": {
+   "habit": 0.7,
+   "trust": 0.04,
+   "convenience": 0.01,
+   "price": 0.02,
+   "timing": 0.0,
+   "values": 0.0,
+   "need": 0.1,
+   "other": 0.0,
+   "quality": 0.13
+  },
+  "price_probabilities": [
+   {
+    "price": 3000.0,
+    "probabilities": [
+     0.13,
+     0.76,
+     0.09,
+     0.02,
+     0.0
+    ]
+   },
+   {
+    "price": 4500.0,
+    "probabilities": [
+     0.11,
+     0.74,
+     0.13,
+     0.02,
+     0.0
+    ]
+   },
+   {
+    "price": 6700.0,
+    "probabilities": [
+     0.08,
+     0.68,
+     0.21,
+     0.03,
+     0.0
+    ]
+   },
+   {
+    "price": 8900.0,
+    "probabilities": [
+     0.05,
+     0.53,
+     0.37,
+     0.05,
+     0.0
+    ]
+   },
+   {
+    "price": 12000.0,
+    "probabilities": [
+     0.01,
+     0.21,
+     0.65,
+     0.12,
+     0.01
+    ]
+   },
+   {
+    "price": 14900.0,
+    "probabilities": [
+     0.01,
+     0.07,
+     0.5,
+     0.4,
+     0.02
+    ]
+   },
+   {
+    "price": 19000.0,
+    "probabilities": [
+     0.0,
+     0.01,
+     0.09,
+     0.85,
+     0.05
+    ]
+   },
+   {
+    "price": 24000.0,
+    "probabilities": [
+     0.0,
+     0.0,
+     0.02,
+     0.79,
+     0.19
+    ]
+   },
+   {
+    "price": 30000.0,
+    "probabilities": [
+     0.0,
+     0.0,
+     0.01,
+     0.54,
+     0.45
+    ]
+   },
+   {
+    "price": 37000.0,
+    "probabilities": [
+     0.0,
+     0.0,
+     0.0,
+     0.33,
+     0.67
+    ]
+   },
+   {
+    "price": 49000.0,
+    "probabilities": [
+     0.0,
+     0.0,
+     0.0,
+     0.31,
+     0.6900000000000001
+    ]
+   },
+   {
+    "price": 75000.0,
+    "probabilities": [
+     0.01,
+     0.0,
+     0.0,
+     0.11,
+     0.88
+    ]
+   }
+  ],
+  "input_tokens": 2423,
+  "fingerprint": "2bfad76bebf703c0fd66a390339273e1ba4ccdb0bbd1ee3222a7243d951ddc06",
+  "convert_version": 1,
+  "flags": {
+   "censored": {
+    "too_cheap": "low"
+   },
+   "multi_cross": [],
+   "nonmonotone": [],
+   "clamped": false
+  }
+ }
+}

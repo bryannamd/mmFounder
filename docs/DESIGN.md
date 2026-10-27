@@ -15,6 +15,7 @@
 - `compile.py`: 패널 결과와 RCF 결과가 없으면 "Profitable"을 주지 않는다(각각 실패 검사로 표시).
 - `compile.py`: 잘못된 `numbers.json`이면 Python 오류 전문 대신 `error: ...` 한 줄을 출력하고 종료 코드 2로 끝난다.
 - `compile.py`: 핵심 숫자 표의 음수 금액은 원본의 `$-63,600` 대신 `-$63,600`으로 보인다(통화 함수 하나를 함께 쓰기 때문).
+- 원칙 4의 예외(2026-10-27): `skills/founder-consumer/jev.py`의 `run` 명령만 네트워크를 쓴다(TypeSafe Jev API). 사용자가 키를 두고 직접 실행할 때만 동작한다. import나 다른 PANEL 명령에서는 네트워크가 일어나지 않는다. 다른 모든 파일은 네트워크 없음. 표준 라이브러리 원칙은 그대로다. 설계와 검토 기록: `docs/PLAN_2026-10-27_jev-panel.md`.
 
 ## 단계 순서
 
@@ -95,6 +96,17 @@ rcf -> board -> competitors -> consumer -> pricing -> offer -> cfo -> marketing 
 - `₩`, `원`, 공백도 숫자에서 제거한다.
 - `--currency CODE` (기본 USD): 보고서 표시 통화. KRW면 격자 간격을 10원 단위로 반올림한다.
 - 패널 answers 폴더를 읽을 때 형제 파일 `../personas.json`이 있고 그 안에 통화가 2개 이상이면 `--market NAME`이 필수다. 없으면 오류. 있으면 그 시장 구매자 답만 쓴다.
+
+### `jev.py` (founder-consumer, 선택. 2026-10-27)
+
+- `jev.py run --dir D --price P --paid TEXT --unit TEXT [--customer C --pitch F --n N --seed S] [--model jev-1.14.0] [--ladder-max 5.0] [--budget-usd 1.0]`.
+- 판정 밖 별도 층이다. 쓰는 곳: `D/jev-answers/Pxxx.json`(기존 답 키 + `jev` 블록: 모델, `p_buy`, 원본 확률, 지문, 플래그), `D/jev.json`(지문, 설정, 실행 이력, 전송 통계, `inflight`), `D/jev-results.md`·`.json`. 읽기만 하는 곳: `answers/`, `panel.json`, `personas.json`, `results.*`. `compile.py`는 Jev 산출물을 읽지 않는다.
+- 요청 1건 = 카드 1장. 상태는 고객 언어 그대로, 질문은 영어 고정 틀(구매 noul 1, 고려 요인 choice 1, 가격 score 12). `reason`·`objection`·`would_change_my_mind`는 빈 문자열, `purchases_first_month`는 없음.
+- 가격은 사다리(`--price` × 0.2~`--ladder-max`, 유효숫자 2자리)별 5단계 확률에서 누적 0.5 교차점을 보간한다. 사다리 밖은 경계값으로 저장하고 `flags.censored`로 표시한다. 순서 보정은 `flags.clamped`. `jev-results.md`의 가격 절은 `van_westendorp.py`의 `read → analyse → report`를 재사용하고 "탐색 추정"으로 표시한다.
+- `panel.py` 변경은 `tally(d, answers="answers")` 인자 하나다. 기본값이면 원본과 같다.
+- 지문이 다른 실행(카드 내용·피치·설정·모델·틀 버전이 하나라도 다름)은 거부한다. 자동 삭제는 없다. 카드 파일과 `jev.json`은 임시 파일 뒤 `os.replace`.
+- 리다이렉트를 따르지 않는다(`urllib`은 다른 호스트로의 리다이렉트에도 `Authorization`을 넘긴다). 429·529·502·503·504·연결 오류만 재시도(최대 5회, 백오프, `Retry-After`). 키는 출력·파일·예외 어디에도 쓰지 않는다.
+- `markets`가 있는 고객은 요청 전에 거부한다(1차 미지원).
 
 ### `founder/rcf.json` (새 스킬 `founder-rcf`)
 

@@ -27,6 +27,7 @@
 - **국가 비율.** `markets`로 시장별 구매자 비율, 언어, 통화, 소개 문구를 나눈다. 결과에 시장별 표가 생긴다. 통화가 다른 소득을 한 줄에 섞지 않는다.
 - **판정 강화.** `/founder-plan`의 판정에 검사 3개를 더했다. 패널 결과가 있는가, RCF 검사를 통과했는가, 낙관 검사에 실패가 없는가. 패널 결과나 RCF가 없으면 "Profitable"을 주지 않는다. 원본과 일부러 다르게 동작하는 첫 번째 곳이다. 두 번째는 잘못된 `numbers.json`이다. Python 오류 전문 대신 `error: ...` 한 줄을 보이고 종료 코드 2로 끝난다.
 - **이사회 4번째 위원.** `founder/rcf.md`가 있으면 Outside View 렌즈 위원이 더해진다.
+- **Jev 폭 확장(선택).** `skills/founder-consumer/jev.py run`이 TypeSafe Jev(결정 전용 모델)에 카드 전원의 구매 확률, 주요 고려 요인, 가격 12단계를 묻는다. 카드 1장에 약 0.3초다. 결과는 `jev-answers/`와 `jev-results.md`에 따로 쓰이고 판정은 에이전트 패널만 읽는다. 쓰임새는 폭이다. 판정과 인용문은 에이전트 20명으로, 구간별 구매율·가격 곡선은 Jev 200장으로 본다. API 키와 비용이 들고 카드·피치가 외부로 전송된다. 저장소에서 네트워크를 쓰는 유일한 명령이다.
 
 ## 설치
 
@@ -115,13 +116,14 @@ rcf -> board -> competitors -> consumer -> pricing -> offer -> cfo -> marketing 
 
 ## 도구
 
-모두 표준 라이브러리만 쓰는 Python이다. 네트워크에 접속하지 않는다.
+모두 표준 라이브러리만 쓰는 Python이다. `jev.py run`만 네트워크에 접속하고(TypeSafe Jev API, 키 필요), 나머지는 접속하지 않는다.
 
 ```bash
 python3 skills/founder-rcf/rcf.py check founder/rcf.json                                  # 기준값 검사
 python3 skills/founder-rcf/rcf.py compare --rcf founder/rcf.json --numbers founder/numbers.json
 python3 skills/founder-cfo/unit_economics.py founder/numbers.json --out founder/cfo.md    # 이익률, 손익분기, 첫해
 python3 skills/founder-consumer/panel.py init --customer founder/customer.json --pitch founder/pitch.md
+python3 skills/founder-consumer/jev.py run --dir founder/panel --price 6500 --paid "a matcha latte" --unit "per cup"
 python3 skills/founder-pricing/van_westendorp.py founder/panel/answers --currency KRW --price 6500
 python3 skills/founder-plan/compile.py --dir founder                                      # 사업계획서와 판정
 ```
@@ -133,6 +135,8 @@ python3 skills/founder-plan/compile.py --dir founder                            
 **`panel.py`**는 목표 고객에서 구매자 카드를 만들고(같은 seed면 같은 카드), 구매자마다 브리프를 쓰고, 답을 검사하고 집계한다. 구매자 대신 답하지 않는다. 예시: `customer.example.json`, 한국어 예시 `customer.kr.example.json`, `pitch.kr.example.md`.
 
 **`van_westendorp.py`**는 구매자별 가격 답 4개(패널 또는 실제 설문 CSV)에서 너무 싼 가격, 비싸지는 가격, 최적 가격, 무차별 가격을 구한다.
+
+**`jev.py`**는 패널 카드 전원을 TypeSafe Jev에 묻고(카드 1장 = 요청 1건) `jev-answers/`, `jev.json`, `jev-results.md`를 쓴다. 에이전트 답과 판정은 건드리지 않는다. 키는 `TYPESAFE_API_KEY` 또는 `~/.config/typesafe/api_key`(권한 600). 카드·피치가 외부로 전송되고 비용이 들므로 실행 전에 사용자 확인을 받는다. 확률은 구매율이 아니고, 인용문이 없고, 같은 상품의 작은 오퍼 차이는 못 가린다. 설계와 검토 기록: `docs/PLAN_2026-10-27_jev-panel.md`.
 
 **`compile.py`**는 사업계획서를 모으고 판정을 계산한다.
 

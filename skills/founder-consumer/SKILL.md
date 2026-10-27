@@ -90,6 +90,43 @@ Before a 100-buyer run, tell the user it is 100 sub-agent calls and suggest
 `founder/panel/answers/`; in the default permission mode that is one approval per
 file, so suggest accept-edits mode (Shift+Tab) for the run.
 
+## Step 3b: breadth with Jev (optional, external API)
+
+Jev is TypeSafe AI's decision model: it answers typed questions (a yes/no
+probability, a choice, a score) and writes no text. `jev.py` in this skill's
+folder asks it the same buy, reason and price questions for every card, in about
+a quarter of a second per card, and writes the results into a separate folder.
+It never touches `answers/` or `results.json`, and `/founder-plan` never reads
+it. The verdict comes from the agent panel alone. Use Jev for breadth: a
+20-buyer agent panel for the verdict and the quotes, then Jev on the same cards
+(for a 2x2 agreement table) or on a bigger deck (200 to 500 cards) for segment
+rates, the reason mix and a price curve.
+
+Before you run it, tell the user three things and wait for a yes: it sends the
+persona cards and the pitch to TypeSafe's servers, it costs money (a few cents
+per 100 cards at the published rate; the tool prints an estimate after the first
+card and stops at `--budget-usd`, default 1.00), and it needs an API key in
+`TYPESAFE_API_KEY` or `~/.config/typesafe/api_key` (mode 600). Never put a real
+customer's data in `customer.json`.
+
+```bash
+JEV="python3 ${CLAUDE_SKILL_DIR}/jev.py"
+JEV run --dir founder/panel --price 6500 --paid "a matcha latte" --unit "per cup"
+JEV run --dir founder/panel-jev --customer founder/customer.json --pitch founder/pitch.md --n 200 \
+        --price 6500 --paid "a matcha latte" --unit "per cup"
+```
+
+`--price`, `--paid` and `--unit` fill a fixed question template (what exactly the
+buyer would pay for, at what price, per what). Set them once, before the first
+run, and do not change the wording after you have seen results. A panel with
+`markets` is refused: one price and one offer per run. Read `jev-results.md`
+only: the price section there carries the censoring and clamping counts that
+`van_westendorp.py` on its own would not show. Say the limits when you report
+it: Jev's probabilities are not buy rates (most sit between 0.3 and 0.45 and
+0.5 is the cut), it cannot tell two close offers for the same product apart, it
+gives no quotes, and its reason is an independent judgement of what matters
+most, not the reason behind its own buy answer.
+
 ## Step 4: read it to the user
 
 `PANEL tally` writes `founder/panel/results.md` and `results.json`. Give the user:
@@ -132,11 +169,12 @@ are never mixed on one line. Without any of these the panel is exactly the origi
 
 ## In Korea
 
-If `founder/locale.json` says `"country": "KR"`, also read `kr.md` in this skill's folder (`${CLAUDE_SKILL_DIR}/kr.md`) and follow it: a `markets` setup, why a Korean buyer simulated by an AI is a stereotype risk and real customer data comes first, and a few Korean buying behaviours as examples only.
+If `founder/locale.json` says `"country": "KR"`, also read `kr.md` in this skill's folder (`${CLAUDE_SKILL_DIR}/kr.md`) and follow it: a `markets` setup, why a Korean buyer simulated by an AI is a stereotype risk and real customer data comes first, a few Korean buying behaviours as examples only, and what Jev gets in Korean (the cards and pitch go as they are; the questions stay English).
 
 
 ## Output
 
 `founder/customer.json`, `founder/pitch.md`, `founder/panel/` (cards, briefs,
-answers, results). Next: `/founder-pricing` reads the price answers,
-`/founder-offer` and `/founder-marketing` read the objections.
+answers, results). With Jev: `jev-answers/`, `jev.json` and `jev-results.md` in
+the same panel folder, read by nobody downstream. Next: `/founder-pricing` reads
+the price answers, `/founder-offer` and `/founder-marketing` read the objections.
