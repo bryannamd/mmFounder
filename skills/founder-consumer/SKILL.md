@@ -125,7 +125,56 @@ only: the price section there carries the censoring and clamping counts that
 it: Jev's probabilities are not buy rates (most sit between 0.3 and 0.45 and
 0.5 is the cut), it cannot tell two close offers for the same product apart, it
 gives no quotes, and its reason is an independent judgement of what matters
-most, not the reason behind its own buy answer.
+most, not the reason behind its own buy answer. Its price answers anchor on the
+price written in the pitch: in the 2026-10-28 check IPP sat at 0.75 to 0.8 times
+the pitch price and PME at 1.25 times it, whatever the price was, so read them
+as "where this price sits for these buyers", not as an estimate of the right
+price.
+
+**Trying several conditions (`sweep`).** To see how the same cards react to a
+list of prices or a list of pitches, run `sweep` instead of many `run`s. It
+makes one folder per variant under `jev-sweeps/`, runs them one after another
+with the same cards and the same price ladder, and writes `jev-sweep.md` with
+the variants side by side, paired card by card against the first (baseline)
+variant: buys, mean probability, the change in mean, cards that flipped either
+way, IPP and PME on the shared ladder, and the baseline's own repeat-to-repeat
+difference (the default repeats it twice) so the reader can see what a run-to-run
+wobble looks like before reading any difference as a signal.
+
+```bash
+JEV sweep --dir founder/panel --pitch-template founder/pitch-template.md \
+          --prices 4900,5900,6500,7500 --paid "a matcha latte" --unit "per cup"
+JEV sweep --dir founder/panel --pitches founder/pitch-a.md,founder/pitch-b.md \
+          --price 6500 --paid "a matcha latte" --unit "per cup"
+```
+
+In a pitch template, write `{price}` where the price goes and nothing else
+around it: it is filled with the full amount in the panel's currency, so
+`한 잔 {price}` becomes `한 잔 6,500원` and `{price} per cup` becomes `$6.50
+per cup`. Any other amount in the pitch (another plan, a discount) stays as you
+wrote it and is not checked. Run it first with `--dry-run`: that prints the
+first 200 characters of every variant's pitch (read the template itself for
+the rest) and the number of requests it would send (the cards each run still
+has to send, over the runs that can run) and sends nothing. Show that to the
+user and wait for a yes, then run the same command without `--dry-run`. `--budget-usd` is the estimated spend
+for the whole sweep: a run whose next card would take it past the budget is
+skipped, and so is every run after it. `--baseline` names a variant by its
+numbered name (`03-p14900`); the baseline runs first, then the others in list
+order, then the baseline again.
+
+Read `jev-sweep.md` with its own rule, printed above the table: a variant whose
+change in mean is about the size of the baseline's repeat difference, or whose
+flipped cards are about as many as flip between two repeats, is a difference Jev
+could not tell apart. There is no pass mark. The more variants, the more likely
+one difference is large by chance. What the checks so far found: on the
+2026-10-28 price sweep (9,900원 to 19,000원 on the same 20 cards) the mean
+moved by 0.008 to 0.016 with no card flipped, not even in price order, while
+the repeat pair moved 0.002 with one flip; the 2026-10-27 wording pair (two
+offers for the same product) was inside the wobble too. So a price within about
+a third of the pitch price and a close wording are differences Jev does not
+tell apart: do not pick a price from a sweep. Use `sweep` to learn whether Jev
+separates your variants at all, take at most two or three that it does to the
+agent panel, and one to real people.
 
 ## Step 4: read it to the user
 

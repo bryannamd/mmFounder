@@ -107,6 +107,7 @@ rcf -> board -> competitors -> consumer -> pricing -> offer -> cfo -> marketing 
 - 지문이 다른 실행(카드 내용·피치·설정·모델·틀 버전이 하나라도 다름)은 거부한다. 자동 삭제는 없다. 카드 파일과 `jev.json`은 임시 파일 뒤 `os.replace`.
 - 리다이렉트를 따르지 않는다(`urllib`은 다른 호스트로의 리다이렉트에도 `Authorization`을 넘긴다). 429·529·502·503·504·연결 오류만 재시도(최대 5회, 백오프, `Retry-After`). 키는 출력·파일·예외 어디에도 쓰지 않는다.
 - `markets`가 있는 고객은 요청 전에 거부한다(1차 미지원).
+- `jev.py sweep --dir D (--pitch-template F --prices P1,P2,... | --pitches F1,F2,...) --paid TEXT --unit TEXT [--price P] [--baseline 02-NAME] [--repeat 2] [--budget-usd 1.0] [--dry-run]`(2단위, 2026-10-27): `D/jev-sweeps/<순번-이름>/`에 `personas.json`(바이트 동일)과 `pitch`만 바꾼 `panel.json`을 두고 변형마다 `run`을 순차로 적용한다(기준 → 나머지 → 기준 반복). 모든 변형에 기준 가격의 사다리를 `--ladder`로 넘긴다(`run`의 유일한 추가 인자. 정확히 12개). `D/jev-sweep.md`·`.json`에 카드별 짝 비교와 기준 반복 차이를 쓴다. 자동 판정 없음. `D/jev-sweep.lock`으로 동시 sweep을 막는다. `--budget-usd`는 sweep 총액이고, 다음 카드의 추정 비용이 남은 예산보다 크면 그 run부터 `skipped`다. `--dry-run`은 안내만 출력하고 키·폴더·잠금·요청 없이 끝난다. 설계: `docs/PLAN_2026-10-27_jev-sweep.md`.
 
 ### `founder/rcf.json` (새 스킬 `founder-rcf`)
 

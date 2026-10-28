@@ -138,6 +138,8 @@ python3 skills/founder-plan/compile.py --dir founder                            
 
 **`jev.py`**는 패널 카드 전원을 TypeSafe Jev에 묻고(카드 1장 = 요청 1건) `jev-answers/`, `jev.json`, `jev-results.md`를 쓴다. 에이전트 답과 판정은 건드리지 않는다. 키는 `TYPESAFE_API_KEY` 또는 `~/.config/typesafe/api_key`(권한 600). 카드·피치가 외부로 전송되고 비용이 들므로 실행 전에 사용자 확인을 받는다. 확률은 구매율이 아니고, 인용문이 없고, 같은 상품의 작은 오퍼 차이는 못 가린다. 설계와 검토 기록: `docs/PLAN_2026-10-27_jev-panel.md`.
 
+`jev.py sweep`은 같은 카드에 가격 목록(피치 틀의 `{price}` 치환)이나 피치 목록을 순차로 돌리고, 변형을 카드별로 짝지어 비교한 `jev-sweep.md`를 쓴다. 모든 변형이 같은 가격 사다리를 쓴다. 기준 변형을 2번 돌린 반복 차이를 같이 보여 주고 자동 판정은 하지 않는다. 2026-10-28 점검(HabitNav 20장, 9,900원~19,000원)에서 구매 확률은 가격에 반응하지 않았고 가격 답은 표시 가격을 따라갔다. sweep으로 가격을 고르지 않는다. 설계와 점검 기록: `docs/PLAN_2026-10-27_jev-sweep.md`.
+
 **`compile.py`**는 사업계획서를 모으고 판정을 계산한다.
 
 시험은 이렇게 돌린다.

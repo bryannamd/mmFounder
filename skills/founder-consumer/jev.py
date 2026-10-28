@@ -14,12 +14,25 @@ verdict (founder-plan) still comes from the agent panel only.
 The first form uses the cards of an existing panel. The second deals new cards
 into a new folder (panel.py init) and sends those.
 
-This is the one founder tool that uses the network, and only in "run": each card
-is one request to api.typesafe.ai carrying that card and the pitch. The key comes
-from TYPESAFE_API_KEY, else from ~/.config/typesafe/api_key (readable by you only:
-chmod 600). --budget-usd (default 1.00) stops the run before a request that would
-take this run's estimated cost past it. It is an estimate from token counts, not
-a cap on the bill.
+    python3 jev.py sweep --dir founder/panel --pitch-template founder/pitch-template.md \\
+        --prices 9900,12900,14900 --paid "the monthly plan" --unit "per month" [--dry-run]
+    python3 jev.py sweep --dir founder/panel --pitches founder/pitch-a.md,founder/pitch-b.md \\
+        --price 14900 --paid "the monthly plan" --unit "per month"
+
+"sweep" runs the same cards once per variant, one run after another: each price
+of --prices put in place of {price} in the template, or each file of --pitches.
+Every variant gets its own folder under jev-sweeps/ and the same price ladder
+(the baseline's), and the baseline runs --repeat times (default 2) to show how
+much Jev moves between two runs of the same requests. jev-sweep.md compares each
+variant with the baseline card by card. --dry-run prints what would be sent and
+stops: no key, no folders, no requests.
+
+This is the one founder tool that uses the network, and only in "run" and
+"sweep": each card is one request to api.typesafe.ai carrying that card and the
+pitch. The key comes from TYPESAFE_API_KEY, else from ~/.config/typesafe/api_key
+(readable by you only: chmod 600). --budget-usd (default 1.00) stops the run
+before a request that would take this run's estimated cost past it. It is an
+estimate from token counts, not a cap on the bill.
 
 State lives in the --dir folder: jev.json (the settings, a fingerprint of the
 cards and settings, the run history) and jev-answers/<id>.json (the answer keys
@@ -27,7 +40,9 @@ the panel uses, plus Jev's own probabilities). Run it again to resume: cards wit
 a saved answer are not sent again. If the cards or the settings changed, it stops
 and asks for a new --dir instead of mixing answers.
 
-Exit codes: 0 done, 1 stopped at the budget (run again to continue), 2 error.
+Exit codes: 0 done, 1 stopped at the budget (run again to continue), 2 error. A
+sweep: 0 when every run is done, 1 when the budget stopped or skipped one, 2 when
+one failed or its folder does not match.
 
 Jev's probabilities are not customers either. The prices are an exploratory
 estimate: a curve that never crosses 0.5 inside the ladder takes its end price.
@@ -39,6 +54,7 @@ import email.utils
 import hashlib
 import http.client
 import importlib.util
+import itertools
 import json
 import math
 import os
@@ -92,6 +108,16 @@ LEVELS = ["too cheap to be any good (quality doubt)", "a bargain", "about right,
 PRICE_IDS = ["price_%02d" % (i + 1) for i in range(len(MULTIPLES) + 1)]
 RAISE = ("More than a quarter of the cards are censored high on %s: the curve does not cross 0.5 inside the ladder."
          " Run again in a new --dir with a higher --ladder-max.")
+SWEEPS = "jev-sweeps"  # a sweep's variant folders, inside the panel's folder
+LOCK = "jev-sweep.lock"
+VARIANT = "%02d-%s"  # the number keeps two variants apart, even two pitch files with the same name
+REPEAT = "%s-r%d"
+LOCKED = ("%s is there: another sweep is running in this folder, or one stopped without tidying up. Check, then delete"
+          " it yourself.")
+READ_RULE = ("If a variant's change in mean is about the size of the baseline's shift in mean between its repeats, or"
+             " smaller, or its flipped cards are about as many as flip between the repeats, Jev could not tell that"
+             " difference apart. The more variants, the more likely one difference is large by chance (%d variants"
+             " here). Confirm two or three candidates with the agent panel, and one with a real test.")
 
 
 class JevError(Exception):
@@ -143,6 +169,27 @@ def ladder(price, top=5.0):
     return out
 
 
+def _numbers(text, flag):
+    """The numbers of a comma-separated flag: "9900,12900" is [9900.0, 12900.0]."""
+    try:
+        return [float(x) for x in text.split(",")]
+    except ValueError:
+        raise JevError("%s takes numbers separated by commas, such as 9900,12900" % flag)
+
+
+def given_ladder(price, text):
+    """--ladder in place of ladder(): --price checked the same way, and twelve prices, one per price question, each
+    a positive number above the one before. A sweep gives every variant the baseline's ladder this way."""
+    if not _finite(price) or price <= 0:
+        raise JevError("--price must be a positive number (got %r)" % price)
+    out = _numbers(text, "--ladder")
+    if len(out) != len(PRICE_IDS) or not all(_finite(x) and x > 0 for x in out) or any(
+            b <= a for a, b in zip(out, out[1:])):
+        raise JevError("--ladder must be %d positive prices, each above the one before (got %s)"
+                       % (len(PRICE_IDS), ", ".join("%g" % x for x in out)))
+    return out
+
+
 def state(card, target, pitch, currency):
     """What Jev reads about one buyer, in the customer's own language."""
     who = {"name": card["name"], "age": card["age"], "group": card["segment"],
@@ -170,6 +217,14 @@ def questions(card, s):
         q[qid] = {"type": "score", "instructions": PRICE_Q.format(paid=s["paid"], price=money(x, cur), unit=s["unit"]),
                   "criteria": list(LEVELS)}
     return q
+
+
+def _settings(a, st, steps):
+    """A run's settings, as jev.json keeps them: what its requests and its fingerprint depend on, apart from the cards."""
+    return {"model": a.model, "price": float(a.price), "paid": a.paid.strip(), "unit": a.unit.strip(), "ladder": steps,
+            "ladder_max": a.ladder_max if a.ladder is None else None,  # a given ladder makes no use of it
+            "currency": st["customer"].get("currency", "USD").upper(), "seed": st["seed"], "template": TEMPLATE,
+            "convert": CONVERT}
 
 
 def fingerprint(cards, st, s):
@@ -481,6 +536,13 @@ def _write_text(path, text):
     os.replace(tmp, path)
 
 
+def _write_bytes(path, data):
+    tmp = path + ".tmp"
+    with open(tmp, "wb") as fh:
+        fh.write(data)
+    os.replace(tmp, path)
+
+
 def _save(path, obj):
     _write_text(path, json.dumps(obj, indent=1, ensure_ascii=False) + "\n")
 
@@ -566,7 +628,7 @@ def _recover(rec, saved, ids):
 def _agent_ok(path, cid):
     try:
         return panel._answer_ok(path, cid) is None
-    except (TypeError, AttributeError):  # valid JSON that is not an object
+    except (TypeError, AttributeError, OSError):  # valid JSON that is not an object, or a file that cannot be read
         return False
 
 
@@ -683,18 +745,18 @@ def results_md(res, report):
 
 
 # ── run ─────────────────────────────────────────────────────────────────────────
-def _tried(this):
+def _tried(this, who="This run"):
     unknown = (" %d requests had an unknown outcome: they may have been billed and are not in the cost."
                % this["unknown"]) if this["unknown"] else ""
-    return "This run: %d requests (%d retries, %d timeouts), confirmed cost about %s.%s" % (
-        this["attempts"], this["retries"], this["timeouts"], _usd(this["usd"]), unknown)
+    return "%s: %d requests (%d retries, %d timeouts), confirmed cost about %s.%s" % (
+        who, this["attempts"], this["retries"], this["timeouts"], _usd(this["usd"]), unknown)
 
 
 def run(a, connect=None, keys=None):
     """The run command. keys collects the key once it is read, so main() can take it out of any error."""
     connect = connect or Transport
     keys = [] if keys is None else keys
-    steps = ladder(a.price, a.ladder_max)
+    steps = ladder(a.price, a.ladder_max) if a.ladder is None else given_ladder(a.price, a.ladder)
     if not _finite(a.budget_usd) or a.budget_usd <= 0:
         raise JevError("--budget-usd must be a positive number of dollars")
     paid, unit = a.paid.strip(), a.unit.strip()
@@ -722,9 +784,7 @@ def run(a, connect=None, keys=None):
         raise JevError("%s already has a panel: drop %s (its cards are dealt already)" % (d, ", ".join(dealing)))
     st, cards = panel.load_state(d)
     _no_markets(st["customer"])
-    s = {"model": a.model, "price": float(a.price), "paid": paid, "unit": unit, "ladder": steps,
-         "ladder_max": a.ladder_max, "currency": st["customer"].get("currency", "USD").upper(), "seed": st["seed"],
-         "template": TEMPLATE, "convert": CONVERT}
+    s = _settings(a, st, steps)
     fp = fingerprint(cards, st, s)
     jpath, ad = panel._path(d, "jev.json"), panel._path(d, "jev-answers")
     rec = _load_record(jpath)
@@ -854,6 +914,528 @@ def run(a, connect=None, keys=None):
     return 0
 
 
+# ── sweep ───────────────────────────────────────────────────────────────────────
+def _read_pitch(path):
+    """A pitch file's text, stripped as panel.py init strips it. JevError if it is missing, unreadable or empty."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read().strip()
+    except FileNotFoundError:
+        raise JevError("no such file: %s" % path)
+    except (OSError, ValueError) as e:
+        raise JevError("cannot read %s as text (%s)" % (path, e.__class__.__name__))
+    if not text:
+        raise JevError("%s is empty: write the pitch first" % path)
+    return text
+
+
+def _plain(x):
+    return "%d" % x if x == int(x) else repr(x)  # 9900 in a folder name, not 9900.0; 6.5 as it is
+
+
+def variants(a, currency):
+    """[(name, price, pitch)]: each price of --prices in place of {price} in --pitch-template, or each file of
+    --pitches at --price. A name is the variant's number and its price or file name: 01-p9900, 02-pitch-b."""
+    if (a.prices is None) == (a.pitches is None):
+        raise JevError("give --prices (with --pitch-template) or --pitches (with --price): one of the two")
+    if a.prices is not None:
+        if a.pitch_template is None or a.price is not None:
+            raise JevError("--prices goes with --pitch-template and without --price: each price in the list is a variant")
+        prices = _numbers(a.prices, "--prices")
+        if not all(_finite(x) and x > 0 for x in prices):
+            raise JevError("--prices must all be positive numbers (got %s)" % a.prices)
+        if len(set(prices)) < len(prices):
+            raise JevError("--prices has the same price twice (%s)" % a.prices)
+        template = _read_pitch(a.pitch_template)
+        if "{price}" not in template:
+            raise JevError("%s has no {price} in it: write {price} where the price goes, with nothing around it (it"
+                           " becomes the whole amount, such as %s)" % (a.pitch_template, money(prices[0], currency)))
+        out = [("p" + _plain(x), x, template.replace("{price}", money(x, currency))) for x in prices]
+        if any(not p or "{price}" in p for _, _, p in out):
+            raise JevError("%s still has {price} in it once the price is in" % a.pitch_template)
+    else:
+        if a.price is None or a.pitch_template is not None:
+            raise JevError("--pitches goes with --price and without --pitch-template: each file is a variant at that price")
+        out = [(os.path.splitext(os.path.basename(p))[0], a.price, _read_pitch(p))
+               for p in (x.strip() for x in a.pitches.split(","))]
+    return [(VARIANT % (i, label), x, p) for i, (label, x, p) in enumerate(out, 1)]
+
+
+def _runs(a, st, cards, vs, base, steps):
+    """Every run of the sweep in the order they go: the baseline, the other variants, then the baseline again.
+
+    Each carries its folder, the panel.json that folder needs (the snapshot with its pitch), the arguments run() gets,
+    and the settings and fingerprint its answers must have. A repeat asks exactly what the baseline asks, so it has
+    the same ones."""
+    ladder_text = ",".join(repr(x) for x in steps)  # repr() reads back as the same float
+    first = [v for v in vs if v[0] == base][0]
+    order = [(n, 1, x, p) for n, x, p in [first] + [v for v in vs if v[0] != base]]
+    order += [(base, k, first[1], first[2]) for k in range(2, a.repeat + 1)]
+    runs = []
+    for variant, k, price, pitch in order:
+        name = variant if k == 1 else REPEAT % (variant, k)
+        want = dict(st, pitch=pitch)
+        args = argparse.Namespace(dir=panel._path(a.dir, SWEEPS, name), price=price, paid=a.paid, unit=a.unit,
+                                  customer=None, pitch=None, n=None, seed=None, model=a.model, ladder_max=a.ladder_max,
+                                  ladder=ladder_text, budget_usd=None)
+        s = _settings(args, want, steps)
+        runs.append({"name": name, "variant": variant, "run": k, "price": price, "pitch": pitch, "folder": args.dir,
+                     "want": want, "args": args, "settings": s, "fingerprint": fingerprint(cards, want, s),
+                     "status": None, "message": None, "new": False, "saved": 0, "cost": _cost([])})
+    return runs
+
+
+def _look(runs, people, cards, keys):
+    """Read every run's folder and write nothing: still to make, made from this snapshot before (its saved answers
+    counted), or left alone with the status "mismatch", or "error" for a folder half made or that cannot be read."""
+    for r in runs:
+        vd = r["folder"]
+        try:
+            if folder_state(vd) == "new":
+                r["new"] = True
+                continue
+            with open(panel._path(vd, "personas.json"), "rb") as fh:
+                same = fh.read() == people
+            try:
+                same = same and panel._read_json(panel._path(vd, "panel.json")) == r["want"]
+            except ValueError:
+                same = False
+            if not same:
+                r["status"], r["message"] = "mismatch", ("%s holds other cards, another pitch or another panel.json"
+                                                          " than this sweep's: it is left as it is. Move it away to run"
+                                                          " this variant" % vd)
+                continue
+            ad = panel._path(vd, "jev-answers")
+            r["saved"] = sum(1 for c in cards if os.path.isfile(os.path.join(ad, c["id"] + ".json")))
+        except Exception as e:  # this folder's error alone: the other runs go on
+            r["status"], r["message"] = "error", _why(e, keys)
+
+
+def _notice(a, d, cards, runs, steps, cur, base, nv):
+    """What the sweep is about to send, printed before it sends anything. Returns how many requests it plans."""
+    going = [r for r in runs if r["status"] is None]
+    saved, held = sum(r["saved"] for r in going), len(runs) - len(going)
+    todo = len(cards) * len(going) - saved
+    print("Sweep in %s: %d variants by %s, %d cards each. The baseline %s runs %d %s: %d runs in all." % (
+        d, nv, "price" if a.prices is not None else "pitch", len(cards), base, a.repeat,
+        "time" if a.repeat == 1 else "times", len(runs)))
+    print("Requests to send: %d (%d cards x %d runs = %d, less %d answers already saved%s). Each one goes to %s with"
+          " one persona card and its variant's pitch." % (
+              todo, len(cards), len(runs), len(cards) * len(runs), saved,
+              (", less %d for the runs that will not run" % (len(cards) * held)) if held else "", HOST))
+    print('The same in every variant: paid "%s", unit "%s", currency %s, model %s, and this price ladder: %s.' % (
+        a.paid.strip(), a.unit.strip(), cur, a.model, ", ".join(money(x, cur) for x in steps)))
+    print("Budget for the whole sweep: %s (--budget-usd), an estimate from token counts, not a cap on the bill."
+          % _usd(a.budget_usd))
+    for r in runs:
+        head = "  %s%s, %s" % (r["name"], " (baseline)" if r["name"] == base else "", money(r["price"], cur))
+        if r["saved"]:
+            head += " (%d of %d answers saved)" % (r["saved"], len(cards))
+        if r["status"]:
+            print("%s: will not run (%s): %s" % (head, r["status"], r["message"]))
+        elif r["run"] > 1:
+            print("%s: the baseline again, the same requests" % head)
+        else:
+            print("%s: %s" % (head, " ".join(r["pitch"][:200].split())))
+    return todo
+
+
+def _history(path):
+    """The run history in a jev.json: [] when there is none, or none that can be read (run() says why)."""
+    try:
+        rec = _load_record(path)
+    except JevError:
+        return []
+    return [h for h in rec["runs"] if isinstance(h, dict)] if rec else []
+
+
+def _cost(history):
+    """Requests, retries, timeouts, unknown outcomes, tokens and confirmed dollars over these run-history entries."""
+    out = {"attempts": 0, "retries": 0, "timeouts": 0, "unknown": 0, "input_tokens": 0, "usd": 0.0}
+    for h in history:
+        for k in out:
+            if _finite(h.get(k)):
+                out[k] += h[k]
+    return out
+
+
+def _why(e, keys):
+    """A run that failed, in one line with the key taken out, as main() would print it."""
+    text = str(e) if isinstance(e, (JevError, panel.PanelError, vw.PricingError)) else "%s: %s" % (
+        e.__class__.__name__, e)
+    return " ".join(_scrub(text, keys).split())
+
+
+def _finished(r, cards):
+    """A finished run's answers by card id, read again and checked as a resumed run checks them: (answers, problems)."""
+    got, bad = {}, []
+    for c in cards:
+        path = os.path.join(r["folder"], "jev-answers", c["id"] + ".json")
+        try:
+            prob, a = check_saved(path, c, r["settings"], r["fingerprint"]) if os.path.isfile(path) else ("missing",
+                                                                                                           None)
+        except OSError as e:
+            prob, a = "cannot be read (%s)" % e.__class__.__name__, None
+        if prob:
+            bad.append("%s (%s)" % (c["id"], prob))
+        else:
+            got[c["id"]] = a
+    return got, bad
+
+
+def _mean_p(rows):
+    return sum(x["jev"]["p_buy"] for x in rows) / len(rows)
+
+
+def _summary(got, cards, cur):
+    """A finished variant's numbers: buys, mean probability, the price points on the shared ladder, the price flags
+    added up over the four curves (and kept curve by curve), and what weighs most. All of them from the checked
+    answers: the folder is not read again, so a file put there after the run counts nowhere."""
+    rows = [got[c["id"]] for c in cards]
+    f = flag_counts(rows)
+    n = dict((k, sum(1 for x in rows if x["reason_code"] == k)) for k in panel.REASONS)
+    top = sorted((k for k in panel.REASONS if n[k]), key=lambda k: -n[k])[:2]
+    out = {"cards": len(rows), "buys": sum(1 for x in rows if x["buys"]), "mean_p_buy": _mean_p(rows),
+           "ipp": None, "pme": None, "price_note": None,
+           "censored_low": sum(v["low"] for v in f["censored"].values()),
+           "censored_high": sum(v["high"] for v in f["censored"].values()), "clamped": f["clamped"],
+           "nonmonotone": sum(f["nonmonotone"].values()), "multi_cross": sum(f["multi_cross"].values()),
+           "flags": f, "top_reasons": [[k, n[k]] for k in top]}
+    # check_saved made all four from the ladder, in order: every checked answer is a complete price answer
+    complete = [tuple(float(x["price_" + k]) for k in vw.KEYS) for x in rows]
+    if len(complete) < 5:
+        out["price_note"] = "few"
+    else:
+        try:
+            points = vw.analyse(complete, currency=cur)["points"]
+            out["ipp"], out["pme"] = points["IPP"], points["PME"]
+        except vw.PricingError:
+            out["price_note"] = "failed"
+    return out
+
+
+def _pair(cards, base, other):
+    """Two runs on the same cards, card by card: dp is p(other) minus p(base) for each card id."""
+    dp = [(c["id"], other[c["id"]]["jev"]["p_buy"] - base[c["id"]]["jev"]["p_buy"]) for c in cards]
+    vals, half = sorted(v for _, v in dp), len(dp) // 2
+    top = max(dp, key=lambda t: abs(t[1]))  # of two cards as far apart, the first
+    return {"delta_mean": _mean_p([other[c["id"]] for c in cards]) - _mean_p([base[c["id"]] for c in cards]),
+            "median_dp": vals[half] if len(vals) % 2 else (vals[half - 1] + vals[half]) / 2.0,
+            "max_dp": top[1], "max_dp_card": top[0], "mean_abs_dp": sum(abs(v) for _, v in dp) / len(dp),
+            "flipped_to_buy": sum(1 for c in cards if other[c["id"]]["buys"] and not base[c["id"]]["buys"]),
+            "flipped_to_pass": sum(1 for c in cards if base[c["id"]]["buys"] and not other[c["id"]]["buys"])}
+
+
+def compare(a, d, st, cards, vs, runs, base, steps, cur, keys):
+    """jev-sweep.json: the settings, every run with its status and cost, and the comparison. Only the runs done in
+    this sweep are compared, their answers read again."""
+    done = {}
+    for r in runs:
+        if r["status"] == "done":
+            got, bad = _finished(r, cards)
+            if bad:
+                r["status"], r["message"] = "error", ("its answers changed after the run and fail the check: %s. Fix or"
+                                                       " delete them, then run the sweep again" % "; ".join(bad[:10]))
+            else:
+                done[r["name"]] = got
+    first = dict((r["variant"], r) for r in runs if r["run"] == 1)
+    rows = []
+    for name, price, _ in vs:
+        row = {"name": name, "price": price, "status": first[name]["status"], "baseline": name == base}
+        if name in done:
+            row.update(_summary(done[name], cards, cur))
+            if name != base and base in done:
+                row.update(_pair(cards, done[base], done[name]))
+        rows.append(row)
+    rep = {"runs": [], "pairs": [], "note": None}
+    for r in runs:
+        if r["variant"] == base:
+            e = {"name": r["name"], "status": r["status"]}
+            if r["name"] in done:
+                got = [done[r["name"]][c["id"]] for c in cards]
+                e.update(buys=sum(1 for x in got if x["buys"]), mean_p_buy=_mean_p(got))
+            rep["runs"].append(e)
+    fin = [e["name"] for e in rep["runs"] if e["name"] in done]
+    if a.repeat < 2:
+        rep["note"] = "No repeat data: the baseline ran once (--repeat 1)."
+    elif len(fin) < 2:
+        rep["note"] = "No repeat data: fewer than two runs of the baseline finished in this sweep."
+    else:
+        for x, y in itertools.combinations(fin, 2):
+            p = _pair(cards, done[x], done[y])
+            rep["pairs"].append({"runs": [x, y], "mean_abs_dp": p["mean_abs_dp"],
+                                 "flipped": p["flipped_to_buy"] + p["flipped_to_pass"], "shift": abs(p["delta_mean"])})
+        rep["n_pairs"] = len(rep["pairs"])
+        for k in ("mean_abs_dp", "flipped", "shift"):
+            rep[k] = sum(q[k] for q in rep["pairs"]) / float(rep["n_pairs"])
+    agree = {}
+    for name, _, pitch in vs:
+        ag = agreement(d, cards, done[name]) if name in done and pitch == st["pitch"] else None
+        if ag:
+            agree[name] = ag
+    return {
+        "business": st["customer"]["business"], "model": a.model, "threshold": THRESHOLD, "cards": len(cards),
+        "settings": {"axis": "prices" if a.prices is not None else "pitches",
+                     "values": [x for _, x, _ in vs] if a.prices is not None else [
+                         x.strip() for x in a.pitches.split(",")],
+                     "pitch_template": a.pitch_template, "baseline": base, "repeat": a.repeat, "ladder": steps,
+                     "ladder_max": a.ladder_max, "model": a.model, "paid": a.paid.strip(), "unit": a.unit.strip(),
+                     "currency": cur, "budget_usd": a.budget_usd,
+                     "pitch_sha256": dict((n, hashlib.sha256(p.encode("utf-8")).hexdigest()) for n, _, p in vs)},
+        "runs": [dict(r["cost"], name=r["name"], variant=r["variant"], run=r["run"], folder=r["folder"],
+                      price=r["price"], status=r["status"], message=_scrub(r["message"], keys) if r["message"] else None)
+                 for r in runs],
+        "totals": _cost([r["cost"] for r in runs]),
+        "variants": rows, "repeats": rep, "agreement": agree,
+    }
+
+
+def _signed(v):
+    return "%+.3f" % (round(v, 3) + 0.0)  # a change that rounds to nothing is +0.000, not -0.000
+
+
+def sweep_md(res):
+    s = res["settings"]
+    cur, base = s["currency"], s["baseline"]
+    m = lambda v: "n/a" if v is None else money(v, cur)
+    L = ["# Jev sweep: %s" % res["business"], ""]
+    L.append("%d variants by %s on the same %d cards, each compared card by card with the baseline, %s. The questions"
+             " and the price ladder are the same in every variant: only the pitch changes, and in a price sweep the"
+             " price in the buy question with it. Jev (%s) gives each card a buy probability; a card counts as a buyer"
+             " at %s or more." % (len(res["variants"]), {"prices": "price", "pitches": "pitch"}[s["axis"]],
+                                  res["cards"], base, res["model"], res["threshold"]))
+    L += ["", READ_RULE % len(res["variants"])]
+    L += ["", "## Variants", "",
+          "| variant | price | status | buy | mean | change in mean | flipped to buy | flipped to pass | IPP | PME |"
+          " censored low | censored high | clamped | not monotone | crosses 0.5 twice | weighs most |",
+          "| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |"]
+    for v in res["variants"]:
+        cells = [_cell(v["name"] + (" (baseline)" if v["baseline"] else "")), m(v["price"]), v["status"]]
+        if "buys" in v:
+            change = ["", "", ""]
+            if "delta_mean" in v:
+                change = [_signed(v["delta_mean"]), str(v["flipped_to_buy"]), str(v["flipped_to_pass"])]
+            cells += ["%d" % v["buys"], "%.3f" % v["mean_p_buy"]] + change
+            cells += [m(v["ipp"]), m(v["pme"])] if v["price_note"] is None else [v["price_note"]] * 2
+            cells += [str(v[k]) for k in ("censored_low", "censored_high", "clamped", "nonmonotone", "multi_cross")]
+            cells.append(", ".join("%s %d" % (k, n) for k, n in v["top_reasons"]))
+        else:
+            cells += [""] * 13
+        L.append("| %s |" % " | ".join(cells))
+    L += ["", "Mean is the average buy probability over the cards, not a share of buyers. The change in mean and the"
+          " flips are against the baseline: a flipped card is on the other side of 0.5. IPP and PME come from the"
+          " variant's own price answers on the shared ladder, an exploratory estimate as in jev-results.md (\"few\":"
+          " under 5 complete price answers; \"failed\": the price tool found no curve). The censoring, clamping and"
+          " other flag counts add up the four price curves; jev-sweep.json has them curve by curve."]
+    L += ["", "## Card by card against the baseline", ""]
+    others = [v for v in res["variants"] if "delta_mean" in v]
+    if others:
+        L += ["dp is a card's buy probability in the variant minus the same card's in the baseline.", "",
+              "| variant | median dp | largest dp | on card |", "| --- | ---: | ---: | --- |"]
+        for v in others:
+            L.append("| %s | %s | %s | %s |" % (_cell(v["name"]), _signed(v["median_dp"]), _signed(v["max_dp"]),
+                                                v["max_dp_card"]))
+    elif not any("buys" in v for v in res["variants"] if v["baseline"]):
+        L.append("The baseline did not finish in this sweep, so there is nothing to compare with.")
+    else:
+        L.append("No other variant finished in this sweep.")
+    rep = res["repeats"]
+    L += ["", "## The baseline, run again", "",
+          "The same requests sent again: how far these runs are apart is Jev's own run-to-run wobble, not the offer.",
+          "", "| run | status | buy | mean |", "| --- | --- | ---: | ---: |"]
+    for e in rep["runs"]:
+        L.append("| %s | %s | %s | %s |" % (_cell(e["name"]), e["status"], e.get("buys", ""),
+                                            ("%.3f" % e["mean_p_buy"]) if "mean_p_buy" in e else ""))
+    L.append("")
+    if rep["note"]:
+        L.append(rep["note"])
+    else:
+        L.append("%s: mean absolute dp per card %.3f, cards flipped %.1f, shift in mean %.3f." % (
+            "One pair of runs" if rep["n_pairs"] == 1 else "Averaged over %d pairs of runs" % rep["n_pairs"],
+            rep["mean_abs_dp"], rep["flipped"], rep["shift"]))
+        if rep["n_pairs"] > 1:
+            L.append("")
+            for q in rep["pairs"]:
+                L.append("- %s and %s: mean absolute dp %.3f, %d flipped, shift %.3f" % (
+                    q["runs"][0], q["runs"][1], q["mean_abs_dp"], q["flipped"], q["shift"]))
+    if res["agreement"]:
+        L += ["", "## Agent panel and Jev, card by card", "",
+              "Only for a variant whose pitch is the panel's own, the same text as in panel.json. The agent answers carry"
+              " no fingerprint, so \"the same pitch\" is a comparison of the text and nothing more."]
+        for name, ag in sorted(res["agreement"].items()):
+            L += ["", "### %s: %d cards have both answers" % (name, ag["n"]), "",
+                  "| | Jev: buy | Jev: pass |", "| --- | ---: | ---: |",
+                  "| agent: buy | %d | %d |" % (ag["both"], ag["agent_only"]),
+                  "| agent: pass | %d | %d |" % (ag["jev_only"], ag["neither"])]
+    L += ["", "## Runs", "",
+          "| run | folder | status | requests | retries | timeouts | unknown outcome | confirmed cost |",
+          "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |"]
+    t = res["totals"]
+    for r in res["runs"] + [dict(t, name="all", status="", folder=None)]:
+        L.append("| %s | %s | %s | %d | %d | %d | %d | %s |" % (
+            _cell(r["name"]), _cell(os.path.join(SWEEPS, r["name"])) if r["folder"] else "", r["status"],
+            r["attempts"], r["retries"], r["timeouts"], r["unknown"], _usd(r["usd"])))
+    notes = [r for r in res["runs"] if r["message"]]
+    if notes:
+        L += [""] + ["- %s (%s): %s" % (r["name"], r["status"], r["message"]) for r in notes]
+    L += ["", "The cost is an estimate from the tokens Jev reported, not the bill. A request with an unknown outcome may"
+          " have been billed and is not in it."]
+    return "\n".join(L) + "\n"
+
+
+def _sweep(a, d, st, people, cards, vs, runs, base, steps, cur, connect, keys):
+    """The sweep from its notice on, inside the lock: make the folders, run each run in turn, compare, write."""
+    _look(runs, people, cards, keys)
+    planned = _notice(a, d, cards, runs, steps, cur, base, len(vs))
+    for r in runs:
+        if r["new"]:
+            try:
+                os.makedirs(r["folder"], exist_ok=True)
+                _write_bytes(panel._path(r["folder"], "personas.json"), people)
+                _save(panel._path(r["folder"], "panel.json"), r["want"])
+            except Exception as e:  # this folder cannot be made: its error alone
+                r["status"], r["message"] = "error", _why(e, keys)
+    last, got = [], [0]  # the input tokens of the sweep's latest reply, and of all the replies of the run going now
+
+    def connect_and_tell(key):
+        t = (connect or Transport)(key)
+        post = t.post
+
+        def post_and_tell(body):
+            reply = post(body)
+            tok = _tokens(reply)
+            if tok is not None:
+                if not last:
+                    left = max(planned - 1, 0)
+                    print("first request of the sweep: %d input tokens. The other %d planned: about %s more, judged"
+                          " from this one." % (tok, left, _usd(left * tok * USD_PER_TOKEN)))
+                last[:] = [tok]
+                got[0] += tok
+            return reply
+        t.post = post_and_tell  # the replies of every run: the first gives the estimate, the latest the next card's
+        return t
+
+    stop = False
+    for k, r in enumerate(runs, 1):
+        if r["status"]:
+            continue
+        left = a.budget_usd - sum(x["cost"]["usd"] for x in runs)
+        # a run judges its first card from its own saved cards only: the sweep judges it from the latest reply
+        nxt = last[0] * USD_PER_TOKEN if last and r["saved"] < len(cards) else 0.0
+        if stop or left <= 0 or nxt > left:
+            r["status"], stop = "skipped", True
+            continue
+        print("\n[%d/%d] %s, %s" % (k, len(runs), r["name"], money(r["price"], cur)))
+        jpath = panel._path(r["folder"], "jev.json")
+        got[0], before, after = 0, None, None
+        r["args"].budget_usd = left
+        try:  # one run failing, or its record, does not stop the others
+            before = _cost(_history(jpath))
+            code = run(r["args"], connect_and_tell, keys)
+            r["status"] = "done" if code == 0 else "budget"
+        except Exception as e:
+            r["status"], r["message"] = "error", _why(e, keys)
+        try:
+            after = _cost(_history(jpath))
+        except Exception as e:
+            if r["status"] != "error":
+                r["status"], r["message"] = "error", _why(e, keys)
+        if r["status"] == "error":
+            print("%s: error: %s" % (r["name"], r["message"]))
+        # what the history gained, not only the new entry: a request cut off earlier is counted now, on the entry before
+        cost = dict((f, after[f] - before[f]) for f in after) if before and after else _cost([])
+        # and no less than this run's replies: a record that could not be saved keeps none of their cost
+        cost["input_tokens"] = max(cost["input_tokens"], got[0])
+        cost["usd"] = max(cost["usd"], got[0] * USD_PER_TOKEN)
+        r["cost"] = cost
+        if r["status"] == "budget":
+            stop = True
+    res = compare(a, d, st, cards, vs, runs, base, steps, cur, keys)
+    _write_text(panel._path(d, "jev-sweep.md"), sweep_md(res))
+    _save(panel._path(d, "jev-sweep.json"), res)
+    print("")
+    for r in res["runs"]:
+        print("%s: %s%s" % (r["name"], r["status"], (": %s" % r["message"]) if r["message"] else ""))
+    print(_tried(res["totals"], "This sweep, every run"))
+    print("Wrote %s" % panel._path(d, "jev-sweep.md"))
+    seen = set(r["status"] for r in runs)
+    return 2 if seen & {"error", "mismatch"} else 1 if seen & {"budget", "skipped"} else 0
+
+
+def sweep(a, connect=None, keys=None):
+    """The sweep command: run() once per variant on the same cards, one after another, then the comparison.
+
+    keys goes on to every run(), so a key one of them read is taken out of anything the sweep prints or writes."""
+    keys = [] if keys is None else keys
+    d = a.dir
+    if a.repeat < 1:
+        raise JevError("--repeat must be 1 or more: how many times the baseline runs")
+    if not _finite(a.budget_usd) or a.budget_usd <= 0:
+        raise JevError("--budget-usd must be a positive number of dollars")
+    if not a.paid.strip() or not a.unit.strip():
+        raise JevError('--paid and --unit need words, such as --paid "the monthly plan" --unit "per month"')
+    if folder_state(d) == "new":
+        raise JevError("%s has no panel: sweep sends cards that are dealt already (panel.py init, or jev.py run with"
+                       " --customer, --pitch and --n)" % d)
+    # the snapshot, read once: every variant folder is made from these
+    with open(panel._path(d, "personas.json"), "rb") as fh:
+        people = fh.read()
+    try:
+        st, cards = panel._read_json(panel._path(d, "panel.json")), json.loads(people.decode("utf-8"))
+    except ValueError as e:
+        raise JevError("the panel in %s is not valid JSON (%s)" % (d, e))
+    _no_markets(st["customer"])
+    cur = st["customer"].get("currency", "USD").upper()
+    vs = variants(a, cur)
+    names = [v[0] for v in vs]
+    base = names[0] if a.baseline is None else a.baseline
+    if base not in names:
+        raise JevError("--baseline %s is not a variant of this sweep: give one of %s" % (base, ", ".join(names)))
+    steps = ladder(vs[names.index(base)][1], a.ladder_max)
+    out = [money(x, cur) for _, x, _ in vs if not steps[0] <= x <= steps[-1]]
+    if out:
+        raise JevError("every variant is asked about the baseline's price ladder, %s to %s, and %s is outside it: choose"
+                       " another --baseline or --ladder-max" % (money(steps[0], cur), money(steps[-1], cur),
+                                                               ", ".join(out)))
+    runs = _runs(a, st, cards, vs, base, steps)
+    folders = [r["folder"] for r in runs]
+    twice = sorted(set(f for f in folders if folders.count(f) > 1))
+    if twice:
+        raise JevError("two runs of this sweep would share a folder (%s): rename a pitch file" % ", ".join(twice))
+    lock = panel._path(d, LOCK)
+    if a.dry_run:
+        if os.path.exists(lock):
+            raise JevError(LOCKED % lock)
+        _look(runs, people, cards, keys)
+        _notice(a, d, cards, runs, steps, cur, base, len(vs))
+        print("Dry run: nothing was sent, and no folder or lock file was made. To send, run the same command without"
+              " --dry-run.")
+        return 0
+    mine = "started %s by process %d\n" % (_stamp(), os.getpid())  # made first: nothing stands between lock and try
+    try:
+        fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    except FileExistsError:
+        raise JevError(LOCKED % lock)
+    try:
+        try:
+            fh = os.fdopen(fd, "w", encoding="utf-8")
+        except BaseException:
+            os.close(fd)  # no file object took it over
+            raise
+        with fh:
+            fh.write(mine)
+        return _sweep(a, d, st, people, cards, vs, runs, base, steps, cur, connect, keys)
+    finally:
+        try:
+            with open(lock, encoding="utf-8") as fh:
+                # all of ours, or the part written before a stop. Deleted by hand and taken by another sweep: not ours
+                ours = mine.startswith(fh.read())
+            if ours:
+                os.remove(lock)
+        except OSError:
+            pass  # gone already: nothing to tidy
+
+
 def main(argv=None, connect=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -868,13 +1450,37 @@ def main(argv=None, connect=None):
     r.add_argument("--seed", type=int, help="the seed for a new --dir (default: random, and recorded)")
     r.add_argument("--model", default=MODEL, help="a pinned Jev model (default %s)" % MODEL)
     r.add_argument("--ladder-max", type=float, default=5.0, help="the top of the price ladder, times --price (above 3.3)")
+    r.add_argument("--ladder", help="the 12 ladder prices, comma-separated and rising, in place of --price times the"
+                                    " steps (--ladder-max is not used then). Sweep gives every variant the baseline's"
+                                    " ladder this way")
     r.add_argument("--budget-usd", type=float, default=1.0,
                    help="stop before a request that would take this run's estimated cost past it (not a cap on the bill)")
+    w = sub.add_parser("sweep", help="the same cards under several prices or pitches, one run after another (network,"
+                                     " costs money)")
+    w.add_argument("--dir", required=True, help="the panel folder, its cards dealt already")
+    w.add_argument("--prices", help="the prices to try, comma-separated: 9900,12900,14900 (with --pitch-template)")
+    w.add_argument("--pitch-template", help="the pitch with {price} where the price goes: {price} becomes 9,900원 or $6.50")
+    w.add_argument("--pitches", help="the pitch files to try, comma-separated (with --price)")
+    w.add_argument("--price", type=float, help="the price in every file of --pitches, in the panel's currency")
+    w.add_argument("--paid", required=True, help='what they would pay for, in English: "the monthly plan"')
+    w.add_argument("--unit", required=True, help='what the price is for, in English: "per month", "per cup"')
+    w.add_argument("--baseline", help="the variant the others are compared with, by its name such as 02-p12900"
+                                      " (default: the first)")
+    w.add_argument("--repeat", type=int, default=2, help="how many times the baseline runs, to show how far two runs of"
+                                                         " the same requests are apart (default 2)")
+    w.add_argument("--model", default=MODEL, help="a pinned Jev model (default %s)" % MODEL)
+    w.add_argument("--ladder-max", type=float, default=5.0, help="the top of the price ladder, times the baseline's price"
+                                                                 " (above 3.3)")
+    w.add_argument("--budget-usd", type=float, default=1.0,
+                   help="stop before a request that would take the whole sweep's estimated cost past it (not a cap on"
+                        " the bill)")
+    w.add_argument("--dry-run", action="store_true", help="print what would be sent and stop: no key, no folders, no"
+                                                          " requests")
     a = ap.parse_args(argv)
     keys = []
     line = lambda text: " ".join(_scrub(text, keys).split())
     try:
-        return run(a, connect, keys)
+        return (sweep if a.cmd == "sweep" else run)(a, connect, keys)
     except (JevError, panel.PanelError, vw.PricingError) as e:
         print("error: %s" % line(str(e)), file=sys.stderr)
         return 2

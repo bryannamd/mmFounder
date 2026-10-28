@@ -1171,5 +1171,856 @@ class Regression(Base):
         self.assertTrue(all(math.isfinite(v) for v in jev.ladder(14900)))
 
 
+# ── 9. run --ladder ──────────────────────────────────────────────────────────────
+class LadderArg(Base):
+    n = 3
+
+    def test_a_given_ladder_is_checked_as_a_made_one_is(self):
+        good = ["%g" % x for x in LADDER_6500]
+        for steps in (good[:11], good + ["40000"], ["0"] + good[1:], ["-1300"] + good[1:], ["nan"] + good[1:],
+                      good[:5] + [good[4]] + good[6:], list(reversed(good)), good[:11] + ["cheap"]):
+            run = self.run_jev("--ladder=" + ",".join(steps))  # with "=": argparse before 3.12 reads -1300,... as a flag
+            self.assertEqual((run.code, run.fake.calls), (2, []), steps)
+            self.assertIn("--ladder", run.err)
+            self.assertFalse(os.path.exists(os.path.join(self.d, "jev.json")))
+        run = self.run_jev("--ladder", ",".join(good), price="0")
+        self.assertEqual((run.code, run.fake.calls), (2, []))
+        self.assertIn("--price must be a positive number", run.err)
+
+    def test_a_given_ladder_is_asked_and_fingerprinted(self):
+        steps = [1000.0, 2000.0, 3000.0, 4000.0, 5000.0, 6500.0, 8000.0, 10000.0, 12000.0, 15000.0, 20000.0, 30000.0]
+        run = self.run_jev("--ladder", "1000,2000,3000,4000,5000,6500,8000,10000,12000,15000,20000,30000")
+        self.assertEqual((run.code, len(run.fake.calls)), (0, 3), run.err)
+        q = run.fake.calls[0]["body"]["questions"]
+        self.assertEqual([q["price_%02d" % i]["instructions"] for i in range(1, 13)],
+                         [WANT_PRICE % p for p in ("1,000원", "2,000원", "3,000원", "4,000원", "5,000원", "6,500원",
+                                                   "8,000원", "10,000원", "12,000원", "15,000원", "20,000원", "30,000원")])
+        self.assertEqual(q["buys"]["instructions"], WANT_BUYS)  # --price still sets the buy question
+        self.assertEqual(self.record()["settings"]["ladder"], steps)
+        self.assertIsNone(self.record()["settings"]["ladder_max"])  # not used with a given ladder
+        self.assertEqual([e["price"] for e in self.answer("P001")["jev"]["price_probabilities"]], steps)
+        again = self.run_jev("--ladder", "1000.0,2000.0,3000.0,4000.0,5000.0,6500.0,8000.0,10000.0,12000.0,15000.0,"
+                                         "20000.0,30000.0")
+        self.assertEqual((again.code, again.fake.calls), (0, []), again.err)
+        made = self.run_jev()  # the ladder 6,500 won makes is another ladder, so another fingerprint
+        self.assertEqual((made.code, made.fake.calls), (2, []))
+        self.assertIn("(ladder)", made.err)
+
+    def test_the_made_ladder_given_by_hand_is_the_same_run(self):
+        self.assertEqual(self.run_jev().code, 0)
+        again = self.run_jev("--ladder", "1300,2000,2900,3900,5200,6500,8100,10000,13000,16000,21000,33000")
+        self.assertEqual((again.code, again.fake.calls), (0, []), again.err)
+
+
+# ── 10. sweep: one run per variant, compared card by card ────────────────────────
+TEMPLATE_KR = "모스 말차 바, 성수역 근처에 새로 여는 말차 카페입니다.\n말차 라테 한 잔 {price}. 오픈 첫 주에는 4,900원."
+# the template with each price put in by hand
+PITCH_9900 = "모스 말차 바, 성수역 근처에 새로 여는 말차 카페입니다.\n말차 라테 한 잔 9,900원. 오픈 첫 주에는 4,900원."
+PITCH_12900 = "모스 말차 바, 성수역 근처에 새로 여는 말차 카페입니다.\n말차 라테 한 잔 12,900원. 오픈 첫 주에는 4,900원."
+PITCH_19000 = "모스 말차 바, 성수역 근처에 새로 여는 말차 카페입니다.\n말차 라테 한 잔 19,000원. 오픈 첫 주에는 4,900원."
+# 9,900 won times the steps, by hand: 1,980 2,970 4,455 5,940 7,920 12,375 15,840 19,800 24,750 32,670 49,500 to two
+# figures, half up, and 9,900 itself at the 1.0 step
+LADDER_9900 = [2000.0, 3000.0, 4500.0, 5900.0, 7900.0, 9900.0, 12000.0, 16000.0, 20000.0, 25000.0, 33000.0, 50000.0]
+WANT_PRICES_9900 = ["2,000원", "3,000원", "4,500원", "5,900원", "7,900원", "9,900원", "12,000원", "16,000원", "20,000원",
+                    "25,000원", "33,000원", "50,000원"]
+WANT_BUYS_AT = ("After seeing `offer_seen_for_the_first_time` once, would `who_decides` start paying for a matcha latte at"
+                " %s per cup within the first month? Yes only if they would actually pay, not just use a free tier or a"
+                " free trial.")
+WANT_RULE_2 = ("If a variant's change in mean is about the size of the baseline's shift in mean between its repeats, or"
+               " smaller, or its flipped cards are about as many as flip between the repeats, Jev could not tell that"
+               " difference apart. The more variants, the more likely one difference is large by chance (2 variants"
+               " here). Confirm two or three candidates with the agent panel, and one with a real test.")
+# PRICE_ROWS with some of "a bargain" moved to "too cheap" at the first prices, or back, so that only the too cheap curve
+# changes and every price answer stays as it was (too cheap is censored low on all three): a step up of 0.08 (not
+# monotone), over 0.5 and back with no step up above 0.04 (crosses twice), or over 0.5 and back by 0.43 (both)
+BUMP = [PRICE_ROWS[0], [0.25, 0.54, 0.19, 0.02, 0.00]] + PRICE_ROWS[2:]
+TWICE = [[0.48, 0.41, 0.10, 0.01, 0.00], [0.52, 0.27, 0.19, 0.02, 0.00], [0.45, 0.31, 0.22, 0.02, 0.00]] + PRICE_ROWS[3:]
+BOTH = [PRICE_ROWS[0], [0.60, 0.19, 0.19, 0.02, 0.00]] + PRICE_ROWS[2:]
+RCF = {"business": "Moss Matcha Bar", "reference_classes": [{"level": 1, "name": "cafes", "why": "same"}],
+       "metrics": [{"key": "survival_1y", "label": "1-year survival", "class_level": 1, "value": 0.6, "unit": "ratio",
+                    "source": "https://example.org/report", "source_date": "2024"}], "adjustments": []}
+
+
+def pitch_of(body):
+    return body["state"]["offer_seen_for_the_first_time"]
+
+
+def tree(d):
+    """Every folder and file under d, with each file's bytes."""
+    out = {}
+    for base, _, files in os.walk(d):
+        out[base] = None
+        for f in files:
+            with open(os.path.join(base, f), "rb") as fh:
+                out[os.path.join(base, f)] = fh.read()
+    return out
+
+
+class ByAsk(FakeJev):
+    """FakeJev answering by what is asked, not by when. act(body, k) gives the action, k counting the earlier requests
+    with the same pitch for the same card: a repeat of the baseline asks exactly what the baseline asked, so k tells
+    its runs apart. An action is a reply to send as JSON, an exception to raise, or (status, headers, body)."""
+
+    def __init__(self, act):
+        FakeJev.__init__(self)
+        self.act, self.seen = act, collections.Counter()
+
+    def https_open(self, req):
+        body = json.loads(req.data.decode("utf-8"))
+        self.calls.append({"url": req.full_url, "headers": dict(req.header_items()), "body": body})
+        ask = (pitch_of(body), body["state"]["who_decides"]["name"])
+        k, self.seen[ask] = self.seen[ask], self.seen[ask] + 1
+        act = self.act(body, k)
+        if isinstance(act, BaseException):
+            raise act
+        if isinstance(act, tuple):
+            return respond(req, *act)
+        return respond(req, 200, {}, json.dumps(act))
+
+
+class SweepBase(Base):
+    n = 6
+
+    def setUp(self):
+        Base.setUp(self)
+        self.template = self.write("pitch-template.md", TEMPLATE_KR + "\n")
+        self.id_of = dict((c["name"], c["id"]) for c in self.cards)
+
+    def write(self, name, text):
+        path = os.path.join(self.root, name)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        return path
+
+    def sweep(self, *args, **kw):
+        fake = ByAsk(kw.get("act") or (lambda body, k: reply_for(body)))
+        argv = ["sweep", "--dir", kw.get("d", self.d), "--paid", "a matcha latte", "--unit", "per cup"] + list(args)
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = jev.main(argv, connect=self.connector(fake))
+        return Run(code, fake, out.getvalue(), err.getvalue())
+
+    def by_price(self, prices, *args, **kw):
+        return self.sweep("--pitch-template", self.template, "--prices", prices, *args, **kw)
+
+    def folder(self, name):
+        return os.path.join(self.d, "jev-sweeps", name)
+
+    def result(self):
+        with open(os.path.join(self.d, "jev-sweep.json"), encoding="utf-8") as fh:
+            res = json.load(fh)
+        with open(os.path.join(self.d, "jev-sweep.md"), encoding="utf-8") as fh:
+            return res, fh.read()
+
+    def statuses(self):
+        return dict((r["name"], r["status"]) for r in self.result()[0]["runs"])
+
+    def card(self, body):
+        return self.id_of[body["state"]["who_decides"]["name"]]
+
+
+class SweepArgs(SweepBase):
+    def refused(self, args, why, **kw):
+        before = tree(self.root)
+        for dry in ([], ["--dry-run"]):
+            with self.subTest(args=args, dry=dry):
+                run = self.sweep(*(list(args) + dry), **kw)
+                self.assertEqual((run.code, run.fake.calls), (2, []), run.out + run.err)
+                self.assertIn(why, run.err)
+                self.assertEqual(tree(self.root), before)
+
+    def test_bad_arguments_are_refused_before_anything(self):
+        tpl, a, b = self.template, self.write("a.md", "A안: 말차 라테 한 잔 9,900원."), self.write("b.md", "B안: 첫 잔 무료.")
+        empty, plain = self.write("empty.md", " \n\n"), self.write("plain.md", "말차 라테 한 잔 9,900원.")
+        for args, why in (
+            (["--pitch-template", tpl, "--prices", "9900,19000", "--pitches", a + "," + b], "one of the two"),
+            (["--price", "9900"], "one of the two"),
+            (["--prices", "9900,19000"], "--prices goes with --pitch-template"),
+            (["--pitch-template", tpl, "--prices", "9900,19000", "--price", "9900"], "--prices goes with --pitch-template"),
+            (["--pitches", a + "," + b], "--pitches goes with --price"),
+            (["--pitches", a + "," + b, "--price", "9900", "--pitch-template", tpl], "--pitches goes with --price"),
+            (["--pitch-template", plain, "--prices", "9900,19000"], "has no {price} in it"),
+            (["--pitch-template", empty, "--prices", "9900,19000"], "is empty"),
+            (["--pitches", a + "," + empty, "--price", "9900"], "is empty"),
+            (["--pitches", a + "," + os.path.join(self.root, "nowhere.md"), "--price", "9900"], "no such file"),
+            (["--pitch-template", tpl, "--prices", "9900,19000,9900"], "the same price twice"),
+            (["--pitch-template", tpl, "--prices", "9900,0"], "must all be positive numbers"),
+            (["--pitch-template", tpl, "--prices", "9900,-19000"], "must all be positive numbers"),
+            (["--pitch-template", tpl, "--prices", "9900,nan"], "must all be positive numbers"),
+            (["--pitch-template", tpl, "--prices", "9900,inf"], "must all be positive numbers"),
+            (["--pitch-template", tpl, "--prices", "9900,cheap"], "takes numbers separated by commas"),
+            # the ladder 9,900 won makes runs from 2,000 to 50,000 won
+            (["--pitch-template", tpl, "--prices", "9900,51000"], "51,000원 is outside it"),
+            (["--pitch-template", tpl, "--prices", "9900,1900"], "1,900원 is outside it"),
+            (["--pitch-template", tpl, "--prices", "9900,19000", "--repeat", "0"], "--repeat must be 1 or more"),
+            (["--pitch-template", tpl, "--prices", "9900,19000", "--repeat", "-1"], "--repeat must be 1 or more"),
+            (["--pitch-template", tpl, "--prices", "9900,19000", "--baseline", "p19000"],
+             "give one of 01-p9900, 02-p19000"),
+            (["--pitches", a + "," + b, "--price", "nan"], "--price must be a positive number"),
+            (["--pitches", a + "," + b, "--price", "0"], "--price must be a positive number"),
+            (["--pitch-template", tpl, "--prices", "9900,19000", "--budget-usd", "0"], "--budget-usd must be a positive"),
+            (["--pitch-template", tpl, "--prices", "9900,19000", "--paid", " "], "--paid and --unit need words"),
+        ):
+            self.refused(args, why)
+
+    def test_help_opens_no_socket(self):
+        def refuse(*a, **k):
+            raise AssertionError("a socket was opened")
+        out = io.StringIO()
+        with mock.patch.object(socket.socket, "connect", refuse), mock.patch.object(socket, "create_connection", refuse):
+            with redirect_stdout(out), self.assertRaises(SystemExit) as cm:
+                jev.main(["sweep", "--help"])
+        self.assertEqual(cm.exception.code, 0)
+        self.assertIn("--dry-run", out.getvalue())
+
+    def test_a_lock_file_stops_a_second_sweep(self):
+        with open(os.path.join(self.d, "jev-sweep.lock"), "w") as fh:
+            fh.write("started 2026-10-28T09:00:00+00:00 by process 4242\n")
+        self.refused(["--pitch-template", self.template, "--prices", "9900,19000"],
+                     "another sweep is running in this folder")
+
+    def test_the_lock_says_who_holds_it_and_another_sweeps_lock_stays(self):
+        real, lock, seen = jev.run, os.path.join(self.d, "jev-sweep.lock"), []
+
+        def run_and_swap(a, connect=None, keys=None):
+            if os.path.basename(a.dir) == "01-p9900":  # deleted by hand while the sweep runs, then taken by another
+                with open(lock, encoding="utf-8") as fh:
+                    seen.append(fh.read())
+                os.remove(lock)
+                with open(lock, "w") as fh:
+                    fh.write("started 2026-10-28T09:00:00+00:00 by process 4242\n")
+            return real(a, connect, keys)
+        with mock.patch.object(jev, "run", run_and_swap):
+            run = self.by_price("9900,19000", "--repeat", "1")
+        self.assertEqual(run.code, 0, run.out + run.err)
+        self.assertRegex(seen[0], r"^started \d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\+00:00 by process %d\n$" % os.getpid())
+        with open(lock, encoding="utf-8") as fh:
+            self.assertEqual(fh.read(), "started 2026-10-28T09:00:00+00:00 by process 4242\n")
+
+    def test_a_stop_while_taking_the_lock_leaves_no_lock(self):
+        args, lock = ["--pitch-template", self.template, "--prices", "9900,19000"], os.path.join(self.d, "jev-sweep.lock")
+        # before the lock file is made, and after it is made but before anything is written to it
+        for owner, name in ((jev, "_stamp"), (jev.os, "fdopen")):
+            with self.subTest(name):
+                with mock.patch.object(owner, name, side_effect=KeyboardInterrupt("stopped")), \
+                        self.assertRaises(KeyboardInterrupt):
+                    self.sweep(*args)
+                self.assertFalse(os.path.exists(lock))
+                self.assertEqual(self.sweep(*(args + ["--dry-run"])).code, 0)
+
+    def test_two_runs_in_one_folder_are_refused(self):
+        offer, again = self.write("offer.md", "A안 피치."), self.write("offer-r2.md", "B안 피치.")
+        args = ["--pitches", offer + "," + again, "--price", "9900"]
+        # without the number in front, the baseline's second run and the second file would both be offer-r2
+        with mock.patch.object(jev, "VARIANT", "%.0s%s"):
+            self.refused(args, "would share a folder")
+        run = self.sweep(*(args + ["--dry-run"]))
+        self.assertEqual(run.code, 0, run.err)
+        for line in ("  01-offer (baseline), 9,900원: A안 피치.", "  02-offer-r2, 9,900원: B안 피치.",
+                     "  01-offer-r2, 9,900원: the baseline again"):
+            self.assertIn(line, run.out)
+
+    def test_a_folder_without_cards_is_refused(self):
+        nothing = os.path.join(self.root, "nothing")
+        os.makedirs(nothing)
+        args = ["--pitch-template", self.template, "--prices", "9900,19000"]
+        self.refused(args, "has no panel", d=nothing)
+        os.remove(os.path.join(self.d, "panel.json"))
+        self.refused(args, "not a complete panel")
+
+
+class SweepFolders(SweepBase):
+    def test_each_variant_folder_is_the_panel_with_its_own_pitch(self):
+        run = self.by_price("9900,19000")
+        self.assertEqual((run.code, len(run.fake.calls)), (0, 18), run.out + run.err)
+        with open(os.path.join(self.d, "personas.json"), "rb") as fh:
+            people = fh.read()
+        with open(os.path.join(self.d, "panel.json"), encoding="utf-8") as fh:
+            base = json.load(fh)
+        self.assertNotIn(base["pitch"], (PITCH_9900, PITCH_19000))
+        for name, pitch in (("01-p9900", PITCH_9900), ("02-p19000", PITCH_19000), ("01-p9900-r2", PITCH_9900)):
+            with open(os.path.join(self.folder(name), "personas.json"), "rb") as fh:
+                self.assertEqual(fh.read(), people, name)
+            with open(os.path.join(self.folder(name), "panel.json"), encoding="utf-8") as fh:
+                got = json.load(fh)
+            self.assertEqual(got["pitch"], pitch)
+            self.assertEqual(dict(got, pitch=base["pitch"]), base)
+            # no answers/ and no briefs/: the agent answers stay in the panel's own folder
+            self.assertEqual(sorted(os.listdir(self.folder(name))), ["jev-answers", "jev-results.json", "jev-results.md",
+                                                                     "jev.json", "panel.json", "personas.json"])
+        prints = dict((n, self.record(self.folder(n))["fingerprint"]) for n in ("01-p9900", "02-p19000", "01-p9900-r2"))
+        self.assertNotEqual(prints["01-p9900"], prints["02-p19000"])
+        self.assertEqual(prints["01-p9900"], prints["01-p9900-r2"])
+        self.assertEqual(sorted(os.listdir(os.path.join(self.d, "jev-sweeps"))), ["01-p9900", "01-p9900-r2", "02-p19000"])
+        self.assertFalse(os.path.exists(os.path.join(self.d, "jev-sweep.lock")))
+        self.no_tmp()
+
+    def test_a_folder_made_for_other_cards_or_another_pitch_is_left_alone(self):
+        self.assertEqual(self.by_price("9900,19000").code, 0)
+        path = os.path.join(self.folder("02-p19000"), "personas.json")
+        with open(path, encoding="utf-8") as fh:
+            cards = json.load(fh)
+        cards[1]["income"] += 100000
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(cards, fh, ensure_ascii=False)
+        path = os.path.join(self.folder("01-p9900-r2"), "panel.json")
+        with open(path, encoding="utf-8") as fh:
+            st = json.load(fh)
+        st["pitch"] = PITCH_12900
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(st, fh, ensure_ascii=False)
+        before = dict((n, tree(self.folder(n))) for n in ("02-p19000", "01-p9900-r2"))
+        run = self.by_price("9900,19000")
+        self.assertEqual((run.code, run.fake.calls), (2, []), run.out + run.err)
+        self.assertEqual(self.statuses(), {"01-p9900": "done", "02-p19000": "mismatch", "01-p9900-r2": "mismatch"})
+        self.assertEqual(dict((n, tree(self.folder(n))) for n in before), before)
+        self.assertIn("  02-p19000, 19,000원: will not run (mismatch): %s holds other cards, another pitch or another"
+                      " panel.json than this sweep's" % self.folder("02-p19000"), run.out)
+        res, md = self.result()
+        self.assertEqual([("buys" in v) for v in res["variants"]], [True, False])  # only what is done is counted
+        self.assertEqual(res["repeats"]["note"],
+                         "No repeat data: fewer than two runs of the baseline finished in this sweep.")
+        self.assertIn("No other variant finished in this sweep.", md)
+
+    def test_a_folder_with_another_seed_or_target_is_left_alone(self):
+        self.assertEqual(self.by_price("9900,12900,19000", "--repeat", "1").code, 0)
+        for name, change in (("02-p12900", lambda st: st.update(seed=8)),
+                             ("03-p19000", lambda st: st["customer"].update(target="성수동 근처의 대학생"))):
+            path = os.path.join(self.folder(name), "panel.json")
+            with open(path, encoding="utf-8") as fh:
+                st = json.load(fh)
+            change(st)
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump(st, fh, ensure_ascii=False)
+        before = dict((n, tree(self.folder(n))) for n in ("02-p12900", "03-p19000"))
+        run = self.by_price("9900,12900,19000", "--repeat", "1")
+        self.assertEqual((run.code, run.fake.calls), (2, []), run.out + run.err)
+        self.assertEqual(self.statuses(), {"01-p9900": "done", "02-p12900": "mismatch", "03-p19000": "mismatch"})
+        self.assertEqual(dict((n, tree(self.folder(n))) for n in before), before)
+
+    def test_a_variant_folder_that_cannot_be_read_is_its_error_alone(self):
+        self.assertEqual(self.by_price("9900", "--repeat", "1").code, 0)  # 01 made by a sweep of its own
+        bad, real = os.path.join(self.folder("01-p9900"), "personas.json"), open
+
+        def guarded(path, *a, **k):
+            if path == bad:
+                raise PermissionError(13, "Permission denied", path)
+            return real(path, *a, **k)
+        with mock.patch.object(jev, "open", guarded, create=True):
+            run = self.by_price("9900,19000", "--repeat", "1")
+        self.assertEqual((run.code, len(run.fake.calls)), (2, 6), run.out + run.err)
+        self.assertEqual(self.statuses(), {"01-p9900": "error", "02-p19000": "done"})
+        res, _ = self.result()
+        self.assertEqual(res["runs"][0]["message"], "PermissionError: [Errno 13] Permission denied: '%s'" % bad)
+        self.assertIn("  01-p9900 (baseline), 9,900원: will not run (error): PermissionError", run.out)
+
+    def test_a_folder_that_cannot_be_made_or_whose_record_cannot_be_read_is_its_error_alone(self):
+        write, history = jev._write_bytes, jev._history
+        no_room = os.path.join(self.folder("02-p12900"), "personas.json")
+        unreadable = os.path.join(self.folder("03-p19000"), "jev.json")
+
+        def write_or_fail(path, data):
+            if path == no_room:
+                raise OSError("no room")
+            return write(path, data)
+
+        def history_or_fail(path):
+            if path == unreadable:
+                raise PermissionError(13, "Permission denied", path)
+            return history(path)
+        with mock.patch.object(jev, "_write_bytes", write_or_fail), mock.patch.object(jev, "_history", history_or_fail):
+            run = self.by_price("9900,12900,19000", "--repeat", "1")
+        self.assertEqual((run.code, len(run.fake.calls)), (2, 6), run.out + run.err)  # the baseline's six cards only
+        res, _ = self.result()
+        self.assertEqual([(r["name"], r["status"], r["message"]) for r in res["runs"]],
+                         [("01-p9900", "done", None), ("02-p12900", "error", "OSError: no room"),
+                          ("03-p19000", "error", "PermissionError: [Errno 13] Permission denied: '%s'" % unreadable)])
+
+    def test_a_folder_cut_off_while_being_made_is_an_error_and_the_rest_runs(self):
+        with crash_on_replace("panel.json", after=False), self.assertRaises(Crash):
+            self.by_price("9900,19000")
+        self.assertEqual(sorted(os.listdir(self.folder("01-p9900"))), ["panel.json.tmp", "personas.json"])
+        self.assertFalse(os.path.exists(os.path.join(self.d, "jev-sweep.lock")))
+        run = self.by_price("9900,19000")
+        self.assertEqual((run.code, len(run.fake.calls)), (2, 12), run.out + run.err)
+        self.assertEqual(self.statuses(), {"01-p9900": "error", "02-p19000": "done", "01-p9900-r2": "done"})
+        self.assertEqual(sorted(os.listdir(self.folder("01-p9900"))), ["panel.json.tmp", "personas.json"])
+        res, md = self.result()
+        self.assertIn("is not a complete panel", res["runs"][0]["message"])
+        self.assertIn("The baseline did not finish in this sweep, so there is nothing to compare with.", md)
+
+
+class SweepContract(SweepBase):
+    def test_two_prices_change_the_pitch_and_the_buy_question_only(self):
+        run = self.by_price("9900,19000", "--repeat", "1")
+        self.assertEqual((run.code, len(run.fake.calls)), (0, 12), run.out + run.err)
+        sent = collections.defaultdict(list)
+        for c in run.fake.calls:
+            sent[pitch_of(c["body"])].append(c["body"])
+        self.assertEqual(sorted(sent), sorted([PITCH_9900, PITCH_19000]))
+        self.assertEqual(len(sent[PITCH_9900]), 6)
+        for low, high in zip(sent[PITCH_9900], sent[PITCH_19000]):
+            self.assertEqual(low["state"]["who_decides"], high["state"]["who_decides"])
+            self.assertEqual(low["questions"]["buys"]["instructions"], WANT_BUYS_AT % "9,900원")
+            self.assertEqual(high["questions"]["buys"]["instructions"], WANT_BUYS_AT % "19,000원")
+            for body in (low, high):
+                self.assertEqual([body["questions"]["price_%02d" % i]["instructions"] for i in range(1, 13)],
+                                 [WANT_PRICE % p for p in WANT_PRICES_9900])
+            # the 13 other questions are the same, and so is the order: of the questions, and of the reason options
+            self.assertEqual(dict(low["questions"], buys=None), dict(high["questions"], buys=None))
+            self.assertEqual(list(low["questions"]), list(high["questions"]))
+            self.assertEqual(list(low["questions"]["reason_code"]["criteria"]),
+                             list(high["questions"]["reason_code"]["criteria"]))
+        self.assertEqual(list(sent[PITCH_9900][0]["questions"]["reason_code"]["criteria"]),
+                         [k for k, _ in WANT_P001_OPTIONS])
+        res, _ = self.result()
+        self.assertEqual(res["settings"]["ladder"], LADDER_9900)
+        for name, price in (("01-p9900", 9900.0), ("02-p19000", 19000.0)):
+            s = self.record(self.folder(name))["settings"]
+            self.assertEqual((s["ladder"], s["price"], s["ladder_max"]), (LADDER_9900, price, None))
+        self.assertIn("this price ladder: %s." % ", ".join(WANT_PRICES_9900), run.out)
+
+    def test_another_baseline_goes_first_and_gives_the_ladder(self):
+        p = {PITCH_9900: 0.6, PITCH_19000: 0.4}
+        run = self.by_price("9900,19000", "--baseline", "02-p19000",
+                            act=lambda body, k: reply_for(body, p=p[pitch_of(body)]))
+        self.assertEqual((run.code, len(run.fake.calls)), (0, 18), run.out + run.err)
+        self.assertEqual([pitch_of(c["body"]) for c in run.fake.calls][::6], [PITCH_19000, PITCH_9900, PITCH_19000])
+        res, md = self.result()
+        # 19,000 won times the steps, by hand: 3,800 5,700 8,550 11,400 15,200 23,750 30,400 38,000 47,500 62,700 95,000
+        # to two figures, half up, and 19,000 itself
+        self.assertEqual(res["settings"]["ladder"], [3800.0, 5700.0, 8600.0, 11000.0, 15000.0, 19000.0, 24000.0,
+                                                     30000.0, 38000.0, 48000.0, 63000.0, 95000.0])
+        self.assertEqual([r["name"] for r in res["runs"]], ["02-p19000", "01-p9900", "02-p19000-r2"])
+        cheap = res["variants"][0]
+        self.assertEqual((cheap["name"], cheap["flipped_to_buy"], cheap["flipped_to_pass"]), ("01-p9900", 6, 0))
+        self.assertAlmostEqual(cheap["delta_mean"], 0.2)
+        self.assertIn("| 02-p19000 (baseline) | 19,000원 | done | 0 | 0.400 |  |  |  |", md)
+
+
+class SweepDollars(SweepBase):
+    customer = "customer.example.json"
+    pitch = "pitch.example.md"
+
+    def test_dollars_keep_their_cents(self):
+        tpl = self.write("template-usd.md", "Moss Matcha Bar on King St W. Matcha lattes at {price} a cup.\n")
+        run = self.sweep("--pitch-template", tpl, "--prices", "6.5,8", "--repeat", "1")
+        self.assertEqual((run.code, len(run.fake.calls)), (0, 12), run.out + run.err)
+        first = dict((pitch_of(c["body"]), c["body"]) for c in reversed(run.fake.calls))  # each pitch's first request
+        self.assertEqual(sorted(first), ["Moss Matcha Bar on King St W. Matcha lattes at $6.50 a cup.",
+                                         "Moss Matcha Bar on King St W. Matcha lattes at $8.00 a cup."])
+        for text, price in (("$6.50 a cup.", "$6.50"), ("$8.00 a cup.", "$8.00")):
+            q = first["Moss Matcha Bar on King St W. Matcha lattes at " + text]["questions"]
+            self.assertEqual(q["buys"]["instructions"], WANT_BUYS_AT % price)
+            self.assertEqual([q["price_%02d" % i]["instructions"] for i in range(1, 13)],
+                             [WANT_PRICE % p for p in ("$1.30", "$2.00", "$2.90", "$3.90", "$5.20", "$6.50", "$8.10",
+                                                       "$10.00", "$13.00", "$16.00", "$21.00", "$33.00")])
+        self.assertEqual(sorted(os.listdir(os.path.join(self.d, "jev-sweeps"))), ["01-p6.5", "02-p8"])
+        self.assertEqual(self.result()[0]["settings"]["ladder"],
+                         [1.3, 2.0, 2.9, 3.9, 5.2, 6.5, 8.1, 10.0, 13.0, 16.0, 21.0, 33.0])
+
+
+class SweepCalls(SweepBase):
+    def test_three_variants_and_a_repeat_send_four_runs_once(self):
+        run = self.by_price("9900,12900,19000")
+        self.assertEqual((run.code, len(run.fake.calls)), (0, 24), run.out + run.err)
+        self.assertIn("Requests to send: 24 (6 cards x 4 runs = 24, less 0 answers already saved).", run.out)
+        # 23 x 2,443 tokens x $0.042 a million is $0.00236
+        self.assertEqual(run.out.count("first request of the sweep"), 1)
+        self.assertIn("first request of the sweep: 2443 input tokens. The other 23 planned: about $0.0024 more", run.out)
+        again = self.by_price("9900,12900,19000")
+        self.assertEqual((again.code, again.fake.calls), (0, []), again.out + again.err)
+        self.assertIn("Requests to send: 0 (6 cards x 4 runs = 24, less 24 answers already saved).", again.out)
+        self.assertEqual(self.statuses(), dict.fromkeys(["01-p9900", "02-p12900", "03-p19000", "01-p9900-r2"], "done"))
+
+    def test_after_a_crash_only_the_cards_not_saved_are_sent(self):
+        third = self.cards[2]["name"]
+
+        def act(body, k):
+            if pitch_of(body) == PITCH_12900 and body["state"]["who_decides"]["name"] == third:
+                return Crash("killed")
+            return reply_for(body)
+        with self.assertRaises(Crash):
+            self.by_price("9900,12900,19000", act=act)
+        self.assertFalse(os.path.exists(os.path.join(self.d, "jev-sweep.lock")))
+        run = self.by_price("9900,12900,19000")
+        self.assertEqual(run.code, 0, run.out + run.err)
+        self.assertIn("Requests to send: 16 (6 cards x 4 runs = 24, less 8 answers already saved).", run.out)
+        sent = [(pitch_of(c["body"]), self.card(c["body"])) for c in run.fake.calls]
+        self.assertEqual(sent, [(PITCH_12900, "P%03d" % i) for i in range(3, 7)] +
+                         [(PITCH_19000, "P%03d" % i) for i in range(1, 7)] +
+                         [(PITCH_9900, "P%03d" % i) for i in range(1, 7)])
+        self.assertIn("P003 was being sent when the last run stopped", run.out)
+        self.assertEqual(self.record(self.folder("02-p12900"))["runs"][0]["unknown"], 1)
+
+    def test_a_request_cut_off_in_one_sweep_is_counted_in_the_next(self):
+        second = self.cards[1]["name"]
+
+        def act(body, k):
+            if pitch_of(body) == PITCH_19000 and body["state"]["who_decides"]["name"] == second:
+                return Crash("killed")
+            return reply_for(body)
+        with self.assertRaises(Crash):
+            self.by_price("9900,19000", act=act)
+        run = self.by_price("9900,19000")
+        self.assertEqual((run.code, len(run.fake.calls)), (0, 11), run.out + run.err)
+        # 02 sends P002 to P006 again, and P002 of the sweep before, cut off, has an unknown outcome: jev.json puts it on
+        # 02's earlier run, and this sweep counts it. 0 + 5 + 6 = 11 requests, 1 unknown, 11 x 2,443 tokens x $0.042 a
+        # million = $0.00113; 02 alone, 5 x 2,443 tokens = $0.00051
+        res, md = self.result()
+        self.assertEqual([(r["name"], r["attempts"], r["unknown"]) for r in res["runs"]],
+                         [("01-p9900", 0, 0), ("02-p19000", 5, 1), ("01-p9900-r2", 6, 0)])
+        self.assertEqual((res["totals"]["attempts"], res["totals"]["unknown"]), (11, 1))
+        self.assertIn("This sweep, every run: 11 requests (0 retries, 0 timeouts), confirmed cost about $0.0011. 1"
+                      " requests had an unknown outcome", run.out)
+        self.assertIn("| 02-p19000 | jev-sweeps/02-p19000 | done | 5 | 0 | 0 | 1 | $0.0005 |", md)
+        self.assertIn("| all |  |  | 11 | 0 | 0 | 1 | $0.0011 |", md)
+        self.assertEqual([r["unknown"] for r in self.record(self.folder("02-p19000"))["runs"]], [1, 0])
+
+
+class SweepStatus(SweepBase):
+    def test_a_failed_run_leaves_the_others_running(self):
+        act = lambda body, k: (401, {}, '{"error": "bad key"}') if pitch_of(body) == PITCH_12900 else reply_for(body)
+        run = self.by_price("9900,12900,19000", act=act)
+        self.assertEqual((run.code, len(run.fake.calls)), (2, 19), run.out + run.err)
+        self.assertEqual(self.statuses(), {"01-p9900": "done", "02-p12900": "error", "03-p19000": "done",
+                                           "01-p9900-r2": "done"})
+        res, md = self.result()
+        self.assertEqual(res["runs"][1]["message"], 'P001: HTTP 401: {"error": "bad key"}')
+        self.assertIn('02-p12900: error: P001: HTTP 401: {"error": "bad key"}', run.out)
+        self.assertEqual([v["name"] for v in res["variants"] if "buys" in v], ["01-p9900", "03-p19000"])
+        self.assertIn("| 02-p12900 | 12,900원 | error" + " | " * 13 + " |", md)
+
+    def test_the_budget_is_for_the_whole_sweep(self):
+        # a million tokens a card is $0.042: the baseline's six cards cost $0.252 of $0.399, and 02 gets the $0.147
+        # left, three cards, since a fourth would take it to $0.168. The two runs after it do not start.
+        run = self.by_price("9900,12900,19000", "--budget-usd", "0.399",
+                            act=lambda body, k: reply_for(body, tokens=1000000))
+        self.assertEqual((run.code, len(run.fake.calls)), (1, 9), run.out + run.err)
+        self.assertEqual(self.statuses(), {"01-p9900": "done", "02-p12900": "budget", "03-p19000": "skipped",
+                                           "01-p9900-r2": "skipped"})
+        self.assertIn("past $0.3990 (--budget-usd)", run.out)
+        self.assertIn("past $0.1470 (--budget-usd)", run.out)
+        self.assertIn("This sweep, every run: 9 requests (0 retries, 0 timeouts), confirmed cost about $0.3780.", run.out)
+        res, _ = self.result()
+        self.assertEqual([r["attempts"] for r in res["runs"]], [6, 3, 0, 0])
+        self.assertAlmostEqual(res["totals"]["usd"], 0.378)
+        self.assertTrue(self.record(self.folder("02-p12900"))["runs"][0]["stopped"].startswith("budget"))
+        self.assertFalse(os.path.exists(os.path.join(self.folder("03-p19000"), "jev.json")))
+
+    def test_answers_that_changed_after_their_run_are_not_counted(self):
+        real = jev.run
+
+        def run_then_change(a, connect=None, keys=None):
+            code = real(a, connect, keys)
+            if os.path.basename(a.dir) == "02-p19000":
+                path = os.path.join(a.dir, "jev-answers", "P002.json")
+                with open(path, encoding="utf-8") as fh:
+                    ans = json.load(fh)
+                ans["jev"]["fingerprint"] = "0" * 64
+                with open(path, "w", encoding="utf-8") as fh:
+                    json.dump(ans, fh)
+            return code
+        with mock.patch.object(jev, "run", run_then_change):
+            run = self.by_price("9900,19000")
+        self.assertEqual(run.code, 2, run.out + run.err)
+        res, _ = self.result()
+        self.assertEqual([(r["name"], r["status"]) for r in res["runs"]],
+                         [("01-p9900", "done"), ("02-p19000", "error"), ("01-p9900-r2", "done")])
+        self.assertIn("its answers changed after the run", res["runs"][1]["message"])
+        self.assertEqual([("buys" in v) for v in res["variants"]], [True, False])
+
+    def test_a_reply_whose_record_could_not_be_saved_still_counts(self):
+        # every save of 01's jev.json after its first reply fails, so 01 is an error and its record on disk shows no
+        # cost. The sweep counts the reply all the same: a million tokens, $0.042 of $0.07. The $0.028 left is less
+        # than one more card, so 02 does not start
+        save, folder = jev._save, self.folder("01-p9900")
+
+        def save_or_fail(path, obj):
+            if path == os.path.join(folder, "jev.json") and obj["runs"][-1]["input_tokens"]:
+                raise OSError("disk full")
+            return save(path, obj)
+        with mock.patch.object(jev, "_save", save_or_fail):
+            run = self.by_price("9900,19000", "--repeat", "1", "--budget-usd", "0.07",
+                                act=lambda body, k: reply_for(body, tokens=1000000))
+        self.assertEqual((run.code, len(run.fake.calls)), (2, 1), run.out + run.err)
+        self.assertEqual(self.statuses(), {"01-p9900": "error", "02-p19000": "skipped"})
+        res, _ = self.result()
+        self.assertEqual(res["runs"][0]["message"], "OSError: disk full")
+        self.assertEqual((res["runs"][0]["attempts"], res["runs"][0]["input_tokens"]), (1, 1000000))
+        self.assertAlmostEqual(res["totals"]["usd"], 0.042)
+        self.assertEqual(self.record(folder)["runs"][0]["usd"], 0.0)  # all the record on disk has
+
+    def test_an_answer_changed_after_its_run_is_checked_in_full(self):
+        real = jev.run
+
+        def run_then_change(a, connect=None, keys=None):
+            code = real(a, connect, keys)
+            if os.path.basename(a.dir) == "02-p19000":  # the fingerprint stays, the probability goes out of range
+                path = os.path.join(a.dir, "jev-answers", "P001.json")
+                with open(path, encoding="utf-8") as fh:
+                    ans = json.load(fh)
+                ans["jev"]["p_buy"] = 5.0
+                with open(path, "w", encoding="utf-8") as fh:
+                    json.dump(ans, fh)
+            return code
+        with mock.patch.object(jev, "run", run_then_change):
+            run = self.by_price("9900,19000", "--repeat", "1")
+        self.assertEqual(run.code, 2, run.out + run.err)
+        self.assertEqual(self.statuses(), {"01-p9900": "done", "02-p19000": "error"})
+        res, md = self.result()
+        self.assertIn("P001 (buys: the probability is not a number from 0 to 1)", res["runs"][1]["message"])
+        self.assertEqual([("buys" in v) for v in res["variants"]], [True, False])
+        self.assertIn("| 02-p19000 | 19,000원 | error" + " | " * 13 + " |", md)
+
+    def test_the_price_points_count_the_checked_answers_only(self):
+        # a price answer of no card on the panel, put in 02's folder after its run, counts nowhere: 02 has the
+        # baseline's price answers, so the baseline's price points
+        real = jev.run
+
+        def run_then_add(a, connect=None, keys=None):
+            code = real(a, connect, keys)
+            if os.path.basename(a.dir) == "02-p19000":
+                with open(os.path.join(a.dir, "jev-answers", "P999.json"), "w", encoding="utf-8") as fh:
+                    json.dump({"id": "P999", "price_too_cheap": 100000, "price_cheap": 200000,
+                               "price_expensive": 300000, "price_too_expensive": 400000}, fh)
+            return code
+        with mock.patch.object(jev, "run", run_then_add):
+            run = self.by_price("9900,19000", "--repeat", "1")
+        self.assertEqual(run.code, 0, run.out + run.err)
+        a, b = self.result()[0]["variants"]
+        self.assertEqual((b["status"], b["cards"]), ("done", 6))
+        self.assertIsNotNone(a["ipp"])
+        self.assertEqual((b["ipp"], b["pme"]), (a["ipp"], a["pme"]))
+
+    def test_after_a_budget_stop_the_runs_after_it_are_skipped_even_when_done(self):
+        self.assertEqual(self.by_price("9900,19000").code, 0)
+        os.remove(os.path.join(self.folder("01-p9900"), "jev-answers", "P006.json"))
+        # one card to send again, on a budget below what its saved cards cost: the baseline stops before sending it
+        run = self.by_price("9900,19000", "--budget-usd", str(0.5 * COST))
+        self.assertEqual((run.code, run.fake.calls), (1, []), run.out + run.err)
+        self.assertIn("Requests to send: 1 (6 cards x 3 runs = 18, less 17 answers already saved).", run.out)
+        self.assertEqual(self.statuses(), {"01-p9900": "budget", "02-p19000": "skipped", "01-p9900-r2": "skipped"})
+
+    def test_a_budget_too_small_for_one_more_card_starts_no_more_runs(self):
+        # the baseline's six cards cost $0.252 of $0.26: the $0.008 left is less than the $0.042 the latest card cost
+        run = self.by_price("9900,19000", "--budget-usd", "0.26", act=lambda body, k: reply_for(body, tokens=1000000))
+        self.assertEqual((run.code, len(run.fake.calls)), (1, 6), run.out + run.err)
+        self.assertEqual(self.statuses(), {"01-p9900": "done", "02-p19000": "skipped", "01-p9900-r2": "skipped"})
+        self.assertAlmostEqual(self.result()[0]["totals"]["usd"], 0.252)
+
+    def test_a_spent_budget_skips_the_rest(self):
+        # the first reply is refused after its tokens were counted: $0.042 spent of $0.02, nothing left for the others
+        run = self.by_price("9900,19000", "--budget-usd", "0.02",
+                            act=lambda body, k: reply_for(body, tokens=1000000, model="jev-latest"))
+        self.assertEqual((run.code, len(run.fake.calls)), (2, 1), run.out + run.err)
+        self.assertEqual(self.statuses(), {"01-p9900": "error", "02-p19000": "skipped", "01-p9900-r2": "skipped"})
+
+
+class SweepCompare(SweepBase):
+    def setUp(self):
+        SweepBase.setUp(self)
+        self.a = os.path.join(self.root, "a.md")
+        shutil.copy(example("founder-consumer", self.pitch), self.a)  # the panel's own pitch
+        self.b = self.write("b.md", "모스 말차 바, 성수역 근처 말차 카페. 한 잔 6,500원, 첫 주에는 두 잔째 무료.")
+        with open(self.a, encoding="utf-8") as fh:
+            self.own = fh.read().strip()
+
+    def compared(self, p, repeat, reasons=("trust",) * 6, rows_b=(PRICE_ROWS,) * 6):
+        """A sweep of a (the panel's own pitch) and b with these buy probabilities, P001 to P006, by pitch and run."""
+        def act(body, k):
+            i, which = int(self.card(body)[1:]) - 1, "a" if pitch_of(body) == self.own else "b"
+            return reply_for(body, p=p[which, k][i], reason=reasons[i], rows=rows_b[i] if which == "b" else PRICE_ROWS)
+        run = self.sweep("--pitches", self.a + "," + self.b, "--price", "6500", "--repeat", str(repeat), act=act)
+        self.assertEqual(run.code, 0, run.out + run.err)
+        return self.result()
+
+    def test_the_numbers_by_hand(self):
+        for i, buys in enumerate([True, True, False, False, False, True]):
+            self.agent("P%03d" % (i + 1), buys)
+        res, md = self.compared({("a", 0): [0.40, 0.60, 0.50, 0.49, 0.50, 0.70],
+                                 ("a", 1): [0.42, 0.60, 0.48, 0.49, 0.50, 0.70],
+                                 ("a", 2): [0.40, 0.66, 0.50, 0.52, 0.50, 0.70],
+                                 ("b", 0): [0.60, 0.44, 0.45, 0.50, 0.48, 0.72]}, repeat=3,
+                                reasons=("habit", "trust", "price", "trust", "habit", "trust"),
+                                rows_b=(BUMP, TWICE, BOTH, BUMP, PRICE_ROWS, PRICE_ROWS))
+        a, b = res["variants"]
+        # 0.5 counts: the baseline buys on P002 P003 P005 P006, b on P001 P004 P006. Both have a mean of 3.19 / 6
+        self.assertEqual((a["buys"], b["buys"]), (4, 3))
+        self.assertAlmostEqual(a["mean_p_buy"], 3.19 / 6)
+        self.assertAlmostEqual(b["mean_p_buy"], 3.19 / 6)
+        self.assertNotIn("delta_mean", a)
+        # dp: +0.20 -0.16 -0.05 +0.01 -0.02 +0.02, which add up to 0. Sorted, the middle two are -0.02 and +0.01
+        self.assertAlmostEqual(b["delta_mean"], 0.0)
+        self.assertAlmostEqual(b["median_dp"], -0.005)
+        self.assertAlmostEqual(b["max_dp"], 0.20)
+        self.assertEqual(b["max_dp_card"], "P001")
+        self.assertEqual((b["flipped_to_buy"], b["flipped_to_pass"]), (2, 3))  # P001 P004 up; P002 P003 P005 down
+        self.assertEqual((a["top_reasons"], b["top_reasons"]), ([["trust", 3], ["habit", 2]], [["trust", 3], ["habit", 2]]))
+        # b's too cheap curves: not monotone on P001 P003 P004, crossing 0.5 twice on P002 P003. Censored low on all six
+        zero = {"too_cheap": 0, "cheap": 0, "expensive": 0, "too_expensive": 0}
+        self.assertEqual((b["nonmonotone"], b["multi_cross"], b["censored_low"], b["censored_high"], b["clamped"]),
+                         (3, 2, 6, 0, 0))
+        self.assertEqual((b["flags"]["nonmonotone"], b["flags"]["multi_cross"]),
+                         (dict(zero, too_cheap=3), dict(zero, too_cheap=2)))
+        self.assertEqual((a["nonmonotone"], a["multi_cross"]), (0, 0))
+        rep = res["repeats"]
+        self.assertEqual([(e["name"], e["buys"]) for e in rep["runs"]], [("01-a", 4), ("01-a-r2", 3), ("01-a-r3", 5)])
+        for e, want in zip(rep["runs"], (3.19 / 6, 3.19 / 6, 3.28 / 6)):
+            self.assertAlmostEqual(e["mean_p_buy"], want)
+        # runs 1-2: |dp| 0.02 0 0.02 0 0 0, P003 flips, means equal. 1-3: 0 0.06 0 0.03 0 0, P004 flips, 0.09 / 6 apart.
+        # 2-3: 0.02 0.06 0.02 0.03 0 0, P003 and P004 flip, 0.09 / 6 apart
+        for q, (runs, d, flips, shift) in zip(rep["pairs"], ((["01-a", "01-a-r2"], 0.04 / 6, 1, 0.0),
+                                                              (["01-a", "01-a-r3"], 0.09 / 6, 1, 0.015),
+                                                              (["01-a-r2", "01-a-r3"], 0.13 / 6, 2, 0.015))):
+            self.assertEqual((q["runs"], q["flipped"]), (runs, flips))
+            self.assertAlmostEqual(q["mean_abs_dp"], d)
+            self.assertAlmostEqual(q["shift"], shift)
+        self.assertEqual(rep["n_pairs"], 3)
+        self.assertAlmostEqual(rep["mean_abs_dp"], 0.26 / 18)
+        self.assertAlmostEqual(rep["flipped"], 4 / 3.0)
+        self.assertAlmostEqual(rep["shift"], 0.01)
+        # b's pitch is not the panel's, so only a: agents buy on P001 P002 P006, the baseline on P002 P003 P005 P006
+        self.assertEqual(res["agreement"], {"01-a": {"n": 6, "both": 2, "agent_only": 1, "jev_only": 2, "neither": 1}})
+        # every card has the same price answers on the 6,500 won ladder: a bargain up to 4,246.67, expensive from
+        # 7,700, too cheap at 1,300 and too expensive at 29,842.11. The price tool steps by 70 won from 1,300, so IPP is
+        # its first price above 4,246.67 and PME its first at 7,700 or more
+        for line in ("| 01-a (baseline) | 6,500원 | done | 4 | 0.532 |  |  |  | 4,310원 | 7,740원 | 6 | 0 | 0 | 0 | 0 |"
+                     " trust 3, habit 2 |",
+                     "| 02-b | 6,500원 | done | 3 | 0.532 | +0.000 | 2 | 3 | 4,310원 | 7,740원 | 6 | 0 | 0 | 3 | 2 |"
+                     " trust 3, habit 2 |",
+                     "| 02-b | -0.005 | +0.200 | P001 |", "| 01-a-r2 | done | 3 | 0.532 |", "| 01-a-r3 | done | 5 | 0.547 |",
+                     "Averaged over 3 pairs of runs: mean absolute dp per card 0.014, cards flipped 1.3, shift in mean"
+                     " 0.010.",
+                     "### 01-a: 6 cards have both answers", "| agent: buy | 2 | 1 |", "| agent: pass | 2 | 1 |",
+                     "\n\n%s\n\n" % WANT_RULE_2):  # the rule as its own paragraph: nothing added before or after it
+            self.assertIn(line, md)
+
+    def test_the_same_answers_twice_show_no_wobble(self):
+        same = [0.40, 0.60, 0.50, 0.49, 0.30, 0.70]
+        res, md = self.compared({("a", 0): same, ("a", 1): same, ("b", 0): same}, repeat=2)
+        b, rep = res["variants"][1], res["repeats"]
+        self.assertEqual((b["delta_mean"], b["median_dp"], b["max_dp"], b["flipped_to_buy"], b["flipped_to_pass"]),
+                         (0.0, 0.0, 0.0, 0, 0))
+        self.assertEqual((rep["n_pairs"], rep["mean_abs_dp"], rep["flipped"], rep["shift"]), (1, 0.0, 0.0, 0.0))
+        self.assertIn("One pair of runs: mean absolute dp per card 0.000, cards flipped 0.0, shift in mean 0.000.", md)
+        self.assertIn("| 02-b | 6,500원 | done | 3 | 0.498 | +0.000 | 0 | 0 |", md)
+        self.assertEqual(res["agreement"], {})  # no agent answers
+        self.assertNotIn("## Agent panel", md)
+
+    def test_one_run_of_the_baseline_has_no_repeat_data(self):
+        res, md = self.compared({("a", 0): [0.40, 0.60, 0.50, 0.49, 0.30, 0.70],
+                                 ("b", 0): [0.60, 0.45, 0.45, 0.50, 0.29, 0.70]}, repeat=1)
+        self.assertEqual((res["repeats"]["pairs"], len(res["runs"])), ([], 2))
+        self.assertIn("No repeat data: the baseline ran once (--repeat 1).", md)
+
+    def test_files_that_cannot_be_read_after_the_runs_do_not_stop_the_summary(self):
+        # once 01-a has run, its personas.json and the agent answer of P002 cannot be opened. The comparison opens
+        # neither: its numbers come from the checked answers, and the 2x2 leaves out the card it cannot read
+        for i in range(6):
+            self.agent("P%03d" % (i + 1), i < 3)
+        real_run, real_open, shut = jev.run, open, set()
+
+        def run_then_shut(a, connect=None, keys=None):
+            code = real_run(a, connect, keys)
+            if os.path.basename(a.dir) == "01-a":
+                shut.update([os.path.join(a.dir, "personas.json"), os.path.join(self.d, "answers", "P002.json")])
+            return code
+
+        def guarded(path, *a, **k):
+            if path in shut:
+                raise PermissionError(13, "Permission denied", path)
+            return real_open(path, *a, **k)
+        with mock.patch.object(jev, "run", run_then_shut), mock.patch("builtins.open", guarded):
+            run = self.sweep("--pitches", self.a + "," + self.b, "--price", "6500", "--repeat", "1")
+        self.assertEqual(run.code, 0, run.out + run.err)
+        res, md = self.result()
+        self.assertEqual([(v["status"], v["ipp"] is None) for v in res["variants"]], [("done", False)] * 2)
+        self.assertEqual(res["agreement"]["01-a"]["n"], 5)
+        self.assertIn("### 01-a: 5 cards have both answers", md)
+
+
+class SweepKeys(SweepBase):
+    def test_the_key_is_nowhere(self):
+        def act(body, k):
+            if pitch_of(body) == PITCH_12900:
+                return 401, {}, '{"error": "key %s is not valid"}' % FAKE_KEY
+            if pitch_of(body) == PITCH_19000:
+                return ValueError("unforeseen " + FAKE_KEY)
+            return reply_for(body)
+        run = self.by_price("9900,12900,19000", "--repeat", "1", act=act)
+        self.assertEqual((run.code, len(run.fake.calls)), (2, 8), run.out + run.err)
+        res, md = self.result()
+        self.assertEqual([(r["status"], r["message"]) for r in res["runs"]],
+                         [("done", None), ("error", 'P001: HTTP 401: {"error": "key [key removed] is not valid"}'),
+                          ("error", "ValueError: unforeseen [key removed]")])
+        self.assertEqual(run.fake.calls[0]["headers"]["Authorization"], "Bearer " + FAKE_KEY)
+        self.assertNotIn(FAKE_KEY, run.out + run.err)
+        for path in files_under(self.root):
+            with open(path, "rb") as fh:
+                self.assertNotIn(FAKE_KEY.encode(), fh.read(), path)
+
+
+class SweepKeeps(SweepBase):
+    customer = "customer.example.json"
+    pitch = "pitch.example.md"
+
+    def test_the_agent_panel_and_the_verdict_stay_as_they_were(self):
+        founder = os.path.join(self.root, "founder")
+        os.makedirs(founder)
+        shutil.move(self.d, os.path.join(founder, "panel"))
+        self.d = os.path.join(founder, "panel")
+        shutil.copy(example("founder-cfo", "example.json"), os.path.join(founder, "numbers.json"))
+        with open(os.path.join(founder, "rcf.json"), "w") as fh:
+            json.dump(RCF, fh)
+        for i, c in enumerate(self.cards):
+            self.agent(c["id"], i < 2)
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(panel.main(["--dir", self.d, "tally"]), 0)
+        names = ["answers", "panel.json", "personas.json", "results.md", "results.json"]
+        before, verdict = snapshot(self.d, names), plan.verdict(founder)
+        tpl = self.write("template-usd.md", "Moss Matcha Bar on King St W. Matcha lattes at {price} a cup.")
+        run = self.sweep("--pitch-template", tpl, "--prices", "6.5,8")
+        self.assertEqual(run.code, 0, run.out + run.err)
+        self.assertEqual(snapshot(self.d, names), before)
+        self.assertEqual(plan.verdict(founder), verdict)
+        for name in ("01-p6.5", "02-p8", "01-p6.5-r2"):
+            self.assertFalse(os.path.exists(os.path.join(self.folder(name), "answers")))
+
+
+class SweepDryRun(SweepBase):
+    def test_a_dry_run_reads_no_key_and_writes_nothing(self):
+        before = tree(self.root)
+        with mock.patch.dict(os.environ):
+            os.environ.pop(jev.KEY_ENV)
+            run = self.by_price("9900,12900,19000", "--dry-run")
+        self.assertEqual((run.code, run.fake.calls), (0, []), run.out + run.err)
+        self.assertEqual(tree(self.root), before)
+        for line in ("Sweep in %s: 3 variants by price, 6 cards each. The baseline 01-p9900 runs 2 times: 4 runs in all."
+                     % self.d,
+                     "Requests to send: 24 (6 cards x 4 runs = 24, less 0 answers already saved).",
+                     'The same in every variant: paid "a matcha latte", unit "per cup", currency KRW, model jev-1.14.0',
+                     "Budget for the whole sweep: $1.0000 (--budget-usd)",
+                     "  01-p9900 (baseline), 9,900원: " + " ".join(PITCH_9900.split()) + "\n",
+                     "  02-p12900, 12,900원: " + " ".join(PITCH_12900.split()) + "\n",
+                     "  03-p19000, 19,000원: " + " ".join(PITCH_19000.split()) + "\n",
+                     "  01-p9900-r2, 9,900원: the baseline again, the same requests\n",
+                     "Dry run: nothing was sent, and no folder or lock file was made."):
+            self.assertIn(line, run.out)
+
+    def test_a_dry_run_counts_what_is_saved_and_cuts_a_long_pitch(self):
+        tpl = self.write("long.md", "A" * 150 + " {price} " + "B" * 100)
+        first = self.sweep("--pitch-template", tpl, "--prices", "9900,19000", "--budget-usd", str(3.5 * COST))
+        self.assertEqual((first.code, len(first.fake.calls)), (1, 3), first.out + first.err)  # three baseline cards
+        before = tree(self.root)
+        run = self.sweep("--pitch-template", tpl, "--prices", "9900,19000", "--dry-run")
+        self.assertEqual((run.code, run.fake.calls), (0, []), run.out + run.err)
+        self.assertEqual(tree(self.root), before)
+        self.assertIn("Requests to send: 15 (6 cards x 3 runs = 18, less 3 answers already saved).", run.out)
+        # 150 A, a space, 9,900원 (6 characters), a space and 42 B: the pitch's first 200 characters
+        self.assertIn("  01-p9900 (baseline), 9,900원 (3 of 6 answers saved): " + "A" * 150 + " 9,900원 " + "B" * 42 + "\n",
+                      run.out)
+
+
 if __name__ == "__main__":
     unittest.main()
