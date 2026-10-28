@@ -116,7 +116,7 @@ rcf -> board -> competitors -> consumer -> pricing -> offer -> cfo -> marketing 
 
 ## 도구
 
-모두 표준 라이브러리만 쓰는 Python이다. `jev.py run`만 네트워크에 접속하고(TypeSafe Jev API, 키 필요), 나머지는 접속하지 않는다.
+모두 표준 라이브러리만 쓰는 Python이다. `jev.py`의 `run`과 `sweep`만 네트워크에 접속하고(TypeSafe Jev API, 키 필요), 나머지는 접속하지 않는다.
 
 ```bash
 python3 skills/founder-rcf/rcf.py check founder/rcf.json                                  # 기준값 검사

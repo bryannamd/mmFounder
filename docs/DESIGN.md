@@ -15,7 +15,7 @@
 - `compile.py`: 패널 결과와 RCF 결과가 없으면 "Profitable"을 주지 않는다(각각 실패 검사로 표시).
 - `compile.py`: 잘못된 `numbers.json`이면 Python 오류 전문 대신 `error: ...` 한 줄을 출력하고 종료 코드 2로 끝난다.
 - `compile.py`: 핵심 숫자 표의 음수 금액은 원본의 `$-63,600` 대신 `-$63,600`으로 보인다(통화 함수 하나를 함께 쓰기 때문).
-- 원칙 4의 예외(2026-10-27): `skills/founder-consumer/jev.py`의 `run` 명령만 네트워크를 쓴다(TypeSafe Jev API). 사용자가 키를 두고 직접 실행할 때만 동작한다. import나 다른 PANEL 명령에서는 네트워크가 일어나지 않는다. 다른 모든 파일은 네트워크 없음. 표준 라이브러리 원칙은 그대로다. 설계와 검토 기록: `docs/PLAN_2026-10-27_jev-panel.md`.
+- 원칙 4의 예외(2026-10-27): `skills/founder-consumer/jev.py`의 `run`과 `sweep` 명령만 네트워크를 쓴다(TypeSafe Jev API. `sweep`은 변형마다 `run`을 부르고, `--dry-run`이면 보내지 않는다). 사용자가 키를 두고 직접 실행할 때만 동작한다. import나 다른 PANEL 명령에서는 네트워크가 일어나지 않는다. 다른 모든 파일은 네트워크 없음. 표준 라이브러리 원칙은 그대로다. 설계와 검토 기록: `docs/PLAN_2026-10-27_jev-panel.md`, `docs/PLAN_2026-10-27_jev-sweep.md`.
 
 ## 단계 순서
 

@@ -174,7 +174,7 @@ JEV run --dir founder/panel-jev --customer founder/customer.json --pitch founder
 
 - 지문: 키 없이 정규화한 객체를 `json.dumps(obj, sort_keys=True, ensure_ascii=False, separators=(",", ":"))`로 직렬화해 sha256. 객체에는 실제 요청 `state`에 들어가는 카드 필드 전체(모든 카드), 피치 원문, `target`, 통화, seed, 모델, 틀 버전, 변환 버전, 사다리, `paid`, `unit`, 보기 설명을 넣는다. 요청은 이 지문을 만든 같은 스냅샷에서 만든다. 같은 ID의 소득·행동만 바뀌어도 지문이 달라진다.
 - `run` 시작: `jev.json`이 있으면 지문을 비교한다. 다르면 "설정이나 카드가 바뀌었다. 새 `--dir`을 쓰거나 `jev-answers/`와 `jev.json`을 직접 지워라"를 출력하고 종료 코드 2. 자동으로 지우지 않는다. 없으면(그리고 4.2의 상태 검사를 통과하면) `jev.json`을 먼저 쓴다.
-- 카드 파일은 `path + ".tmp"`에 쓰고 `os.replace`로 바꾼다(`jev.py` 안에서. `panel._write_json`은 고치지 않는다). `jev.json`도 같은 방식으로 카드마다 갱신한다.
+- 카드 파일은 `path + ".tmp"`에 쓰고 `os.replace`로 바꾼다(`jev.py` 안에서. `panel._write_json`은 고치지 않는다). `jev.json`도 같은 방식으로 카드마다 갱신한다. 2026-10-28 보안 검토 뒤로는 고정 이름 대신 `mkstemp`로 새로 만든 임시 파일에 쓴다(`docs/PLAN_2026-10-27_jev-sweep.md` 13절).
 - 재개: `jev-answers/`의 모든 파일을 먼저 4.4·4.5 기준으로 검사한다(지문과 변환 버전 일치, 형식). 유효한 카드는 보내지 않는다. 손상·불일치 파일은 카드 ID를 출력하고 멈춘다. 덮어쓰지 않는다.
 - `answers/`(에이전트), `panel.json`, `personas.json`, `results.*`는 읽기만 한다. 바이트 하나 바꾸지 않는다.
 

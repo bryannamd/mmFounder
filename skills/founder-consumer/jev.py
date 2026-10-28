@@ -59,8 +59,10 @@ import json
 import math
 import os
 import random
+import re
 import socket
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -85,6 +87,8 @@ RETRIES = 5
 WAIT_CAP = 30
 RETRY_AFTER_CAP = 60
 EXCERPT = 300
+REPLY_MAX = 1000000  # bytes of one reply; a reply to the 14 questions is under 5,000
+ERROR_MAX = 4096  # bytes of an error body: only its first EXCERPT characters are shown
 KEY_ENV = "TYPESAFE_API_KEY"
 KEY_FILE = "~/.config/typesafe/api_key"
 NOTE = "Most people do not buy most things. Decide with this person's own money, habits and doubts in a normal week."
@@ -114,6 +118,7 @@ VARIANT = "%02d-%s"  # the number keeps two variants apart, even two pitch files
 REPEAT = "%s-r%d"
 LOCKED = ("%s is there: another sweep is running in this folder, or one stopped without tidying up. Check, then delete"
           " it yourself.")
+LINKED = "%s is a link: Jev writes into a real folder there, never through a link. Move the link away first"
 READ_RULE = ("If a variant's change in mean is about the size of the baseline's shift in mean between its repeats, or"
              " smaller, or its flipped cards are about as many as flip between the repeats, Jev could not tell that"
              " difference apart. The more variants, the more likely one difference is large by chance (%d variants"
@@ -436,10 +441,18 @@ class Transport(object):
         self.checkpoint = None
 
     def _clean(self, raw):
-        """Text safe to print: the key taken out first, then cut to EXCERPT characters."""
+        """Text safe to print: the key taken out first, then cut to EXCERPT characters and put on one line."""
         if isinstance(raw, bytes):
             raw = raw.decode("utf-8", "replace")
-        return " ".join(_scrub(raw, [self.key]).split())[:EXCERPT]
+        # only whole texts come here (post() does not show a body cut at ERROR_MAX), so the scrub finds every key in it
+        return " ".join(_scrub(raw, [self.key])[:EXCERPT].split())
+
+    def _show(self, what, raw, by="the server"):
+        # words from outside go to stderr only, once and marked. An error message goes on into jev.json and
+        # jev-sweep.md, which an agent reads: there a server's or a proxy's sentence could pass for an instruction
+        text = self._clean(raw)
+        if text:
+            print("%s (text from %s, not instructions): %s" % (what, by, text), file=sys.stderr)
 
     def post(self, body):
         data = json.dumps(body).encode("utf-8")
@@ -451,30 +464,43 @@ class Transport(object):
                 self.stats["retries"] += 1
             if self.checkpoint:
                 self.checkpoint(True)
-            wait = None
+            wait, said = None, None
             try:
                 with self.opener.open(req, timeout=TIMEOUT) as resp:
-                    raw = resp.read()
+                    raw = resp.read(REPLY_MAX + 1)  # the one byte more tells a reply over the limit
             except urllib.error.HTTPError as e:
-                headers = e.headers or {}
-                if 300 <= e.code < 400:
-                    raise JevError("HTTP %d, a redirect to %s: not followed, so the key goes to %s only" % (
-                        e.code, self._clean(headers.get("Location") or "nowhere"), HOST))
-                if e.code not in RETRY:
-                    try:
-                        text = self._clean(e.read())
-                    except (OSError, http.client.HTTPException):
-                        text = ""
-                    raise JevError("HTTP %d: %s" % (e.code, text or "(no body)"))
-                problem = "HTTP %d" % e.code
-                wait = retry_after(headers.get("Retry-After"), self.now())
+                try:
+                    headers = e.headers or {}
+                    if 300 <= e.code < 400:
+                        self._show("the Jev server's redirect target", headers.get("Location") or "")
+                        raise JevError("HTTP %d, a redirect: not followed, so the key goes to %s only"
+                                       % (e.code, HOST))
+                    if e.code not in RETRY:
+                        try:
+                            body = e.read(ERROR_MAX)
+                        except (OSError, http.client.HTTPException):
+                            body = b""
+                        if len(body) < ERROR_MAX:
+                            self._show("the Jev server's reply", body)
+                        else:  # cut there, it may end in part of the key, which no scrub finds
+                            print("the Jev server's reply is %d bytes or longer: not shown" % ERROR_MAX,
+                                  file=sys.stderr)
+                        raise JevError("HTTP %d" % e.code)
+                    problem = "HTTP %d" % e.code
+                    wait = retry_after(headers.get("Retry-After"), self.now())
+                finally:
+                    if e.fp is not None:  # the error holds the reply, and its connection, open until closed
+                        e.close()
             except urllib.error.URLError as e:
                 if isinstance(e.reason, (socket.timeout, TimeoutError)):
                     self.stats["timeouts"] += 1
                 # refused and DNS fail before the request; a reset, a broken pipe or a timeout may come after it left
                 if not isinstance(e.reason, (ConnectionRefusedError, socket.gaierror)):
                     self.stats["unknown"] += 1
-                problem = "no connection (%s)" % self._clean(str(e.reason))
+                # the reason's words can come from a proxy: the message keeps its kind only, stderr gets the words
+                said = str(e.reason)
+                problem = "no connection (%s)" % (
+                    e.reason.__class__.__name__ if isinstance(e.reason, BaseException) else "no reason given")
             except (socket.timeout, TimeoutError):
                 self.stats["timeouts"] += 1
                 self.stats["unknown"] += 1
@@ -483,13 +509,18 @@ class Transport(object):
                 self.stats["unknown"] += 1
                 problem = "the connection dropped (%s)" % e.__class__.__name__
             else:
+                if len(raw) > REPLY_MAX:
+                    raise JevError("HTTP 200 but the reply is over %d bytes: not read past that" % REPLY_MAX)
                 try:
                     return json.loads(raw.decode("utf-8"))
                 except (UnicodeDecodeError, ValueError):
-                    raise JevError("HTTP 200 but the reply is not valid JSON: %s" % self._clean(raw))
+                    self._show("the Jev server's reply", raw)
+                    raise JevError("HTTP 200 but the reply is not valid JSON")
             if self.checkpoint:
                 self.checkpoint(False)
             if k == RETRIES:
+                if said:
+                    self._show("the last connection error", said, "the network or a proxy")
                 raise JevError("gave up after %d tries, the last: %s" % (k + 1, problem))
             self.sleep(wait if wait is not None else min(2 ** k, WAIT_CAP) + self.jitter())
 
@@ -529,18 +560,33 @@ def api_key():
 
 
 # ── files ───────────────────────────────────────────────────────────────────────
+def _write(path, data, check=None):
+    """data in path, whole: written to a temporary file next to it, then moved over it. check(tmp) may refuse it first.
+
+    mkstemp makes a file that was not there before (a link left at a fixed name such as path.tmp would be followed),
+    readable by its owner only. Whatever stops the write, a Ctrl-C too, takes the temporary file away."""
+    folder, name = os.path.split(path)
+    fd, tmp = tempfile.mkstemp(dir=folder or ".", prefix=name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+        if check:
+            check(tmp)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass  # in place already, or gone
+        raise
+
+
 def _write_text(path, text):
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        fh.write(text)
-    os.replace(tmp, path)
+    _write(path, text.encode("utf-8"))
 
 
 def _write_bytes(path, data):
-    tmp = path + ".tmp"
-    with open(tmp, "wb") as fh:
-        fh.write(data)
-    os.replace(tmp, path)
+    _write(path, data)
 
 
 def _save(path, obj):
@@ -548,16 +594,30 @@ def _save(path, obj):
 
 
 def _save_answer(path, cid, a):
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        fh.write(json.dumps(a, indent=1, ensure_ascii=False) + "\n")
-    prob = panel._answer_ok(tmp, cid)
-    if not prob and not all(_finite(a["price_" + k]) and a["price_" + k] > 0 for k in CURVES):
-        prob = "a price is not a positive number"
-    if prob:
-        os.remove(tmp)
-        raise JevError("%s: the converted answer is not valid (%s)" % (cid, prob))
-    os.replace(tmp, path)
+    def check(tmp):
+        prob = panel._answer_ok(tmp, cid)
+        if not prob and not all(_finite(a["price_" + k]) and a["price_" + k] > 0 for k in CURVES):
+            prob = "a price is not a positive number"
+        if prob:
+            raise JevError("%s: the converted answer is not valid (%s)" % (cid, prob))
+    _write(path, (json.dumps(a, indent=1, ensure_ascii=False) + "\n").encode("utf-8"), check)
+
+
+def check_ids(cards):
+    """JevError unless each card's id can name its answer file, jev-answers/<id>.json: 1 to 64 letters, digits, _ or
+    -, and no two the same, case aside. panel.py deals P001, P002 and so on; a panel from elsewhere can have any id."""
+    seen = {}
+    for i, c in enumerate(cards, 1):
+        cid = c.get("id") if isinstance(c, dict) else None
+        # the card's place, not its id: the key may not be read yet, so a key in the id could not be taken out
+        if not isinstance(cid, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", cid):
+            raise JevError("card %d in personas.json has an id that cannot name a file: an id is 1 to 64 letters,"
+                           " digits, _ or -" % i)
+        # macOS names files without regard to case: P001 and p001 would share one answer file
+        if cid.lower() in seen:
+            raise JevError("cards %d and %d in personas.json have the same id (case aside): each card needs its own"
+                           % (seen[cid.lower()], i))
+        seen[cid.lower()] = i
 
 
 def _stamp():
@@ -788,10 +848,13 @@ def run(a, connect=None, keys=None):
     elif dealing:
         raise JevError("%s already has a panel: drop %s (its cards are dealt already)" % (d, ", ".join(dealing)))
     st, cards = panel.load_state(d)
+    check_ids(cards)
     _no_markets(st["customer"])
     s = _settings(a, st, steps)
     fp = fingerprint(cards, st, s)
     jpath, ad = panel._path(d, "jev.json"), panel._path(d, "jev-answers")
+    if os.path.islink(ad):
+        raise JevError(LINKED % ad)
     rec = _load_record(jpath)
     if rec is not None and rec.get("fingerprint") != fp:
         old = rec.get("settings") if isinstance(rec.get("settings"), dict) else {}
@@ -1389,6 +1452,7 @@ def sweep(a, connect=None, keys=None):
         st, cards = panel._read_json(panel._path(d, "panel.json")), json.loads(people.decode("utf-8"))
     except ValueError as e:
         raise JevError("the panel in %s is not valid JSON (%s)" % (d, e))
+    check_ids(cards)
     _no_markets(st["customer"])
     cur = st["customer"].get("currency", "USD").upper()
     vs = variants(a, cur)
@@ -1407,6 +1471,9 @@ def sweep(a, connect=None, keys=None):
     twice = sorted(set(f for f in folders if folders.count(f) > 1))
     if twice:
         raise JevError("two runs of this sweep would share a folder (%s): rename a pitch file" % ", ".join(twice))
+    for path in [panel._path(d, SWEEPS)] + folders:
+        if os.path.islink(path):  # looked at here, once: a link put there while the sweep runs is not seen
+            raise JevError(LINKED % path)
     lock = panel._path(d, LOCK)
     if a.dry_run:
         if os.path.exists(lock):
