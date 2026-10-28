@@ -993,6 +993,24 @@ BY_BEHAVIOUR = [["매일 가는 단골", 2, 1.0], ["건강 우선", 2, 1.0], ["�
 BY_INCOME = [["under 37,300,000원", 3, 1.0], ["51,200,000원 and up", 4, 0.5], ["37,300,000원 to 51,200,000원", 3, 1 / 3.0]]
 
 
+def second_read_fails(path):
+    """Inside agreement(), `path` opens once, for the panel's check, and then cannot be opened again."""
+    real = jev.agreement
+
+    def agreement(*a, **k):
+        real_open, opened = open, []
+
+        def guarded(p, *args, **kw):
+            if p == path:
+                opened.append(p)
+                if len(opened) > 1:
+                    raise PermissionError(13, "Permission denied", p)
+            return real_open(p, *args, **kw)
+        with mock.patch("builtins.open", guarded):
+            return real(*a, **k)
+    return mock.patch.object(jev, "agreement", agreement)
+
+
 class Results(Base):
     def setUp(self):
         Base.setUp(self)
@@ -1049,6 +1067,17 @@ class Results(Base):
         res, md = self.results()
         self.assertIsNone(res["agreement"])
         self.assertNotIn("card by card", md)
+
+    def test_an_agent_answer_that_fails_its_second_read_is_left_out(self):
+        # the panel's check reads P002's agent answer, then the file cannot be opened again: the 2x2 leaves P002 out
+        # and the report is written
+        for i, c in enumerate(self.cards):
+            self.agent(c["id"], i < 7)
+        with second_read_fails(os.path.join(self.d, "answers", "P002.json")):
+            run = self.run_jev()
+        self.assertEqual(run.code, 0, run.err)
+        res, _ = self.results()
+        self.assertEqual(res["agreement"], {"n": 9, "both": 3, "agent_only": 3, "jev_only": 2, "neither": 1})
 
 
 class Verdict(Base):
@@ -1936,6 +1965,19 @@ class SweepCompare(SweepBase):
         self.assertEqual(run.code, 0, run.out + run.err)
         res, md = self.result()
         self.assertEqual([(v["status"], v["ipp"] is None) for v in res["variants"]], [("done", False)] * 2)
+        self.assertEqual(res["agreement"]["01-a"]["n"], 5)
+        self.assertIn("### 01-a: 5 cards have both answers", md)
+
+    def test_an_agent_answer_that_fails_its_second_read_does_not_stop_the_summary(self):
+        # the panel's check reads P002's agent answer, then the file cannot be opened again: the 2x2 leaves P002 out
+        # and the summary is written
+        for i in range(6):
+            self.agent("P%03d" % (i + 1), i < 3)
+        with second_read_fails(os.path.join(self.d, "answers", "P002.json")):
+            run = self.sweep("--pitches", self.a + "," + self.b, "--price", "6500", "--repeat", "1")
+        self.assertEqual(run.code, 0, run.out + run.err)
+        res, md = self.result()
+        self.assertEqual([v["status"] for v in res["variants"]], ["done"] * 2)
         self.assertEqual(res["agreement"]["01-a"]["n"], 5)
         self.assertIn("### 01-a: 5 cards have both answers", md)
 

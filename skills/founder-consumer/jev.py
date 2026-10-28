@@ -625,21 +625,26 @@ def _recover(rec, saved, ids):
 
 
 # ── results ─────────────────────────────────────────────────────────────────────
-def _agent_ok(path, cid):
+def _agent_buys(path, cid):
+    """The agent's buys, or None when the card has no valid agent answer. The panel checks the file by its path and buys
+    is read from it again, as panel.tally reads it: a file that fails either read counts as no answer."""
     try:
-        return panel._answer_ok(path, cid) is None
-    except (TypeError, AttributeError, OSError):  # valid JSON that is not an object, or a file that cannot be read
-        return False
+        if panel._answer_ok(path, cid) is None:
+            buys = panel._read_json(path)["buys"]
+            return buys if isinstance(buys, bool) else None  # the file changed between the two reads
+    except (TypeError, AttributeError, KeyError, ValueError, OSError):  # not an object, not JSON, or cannot be read
+        pass
+    return None
 
 
 def agreement(d, cards, saved):
     """2x2 counts over the cards that have a valid agent answer, or None when no card has one."""
     cells, n = {"both": 0, "agent_only": 0, "jev_only": 0, "neither": 0}, 0
     for c in cards:
-        path = panel._path(d, "answers", c["id"] + ".json")
-        if not _agent_ok(path, c["id"]):
+        agent = _agent_buys(panel._path(d, "answers", c["id"] + ".json"), c["id"])
+        if agent is None:
             continue
-        agent, jev = panel._read_json(path)["buys"], saved[c["id"]]["buys"]
+        jev = saved[c["id"]]["buys"]
         cells["both" if agent and jev else "agent_only" if agent else "jev_only" if jev else "neither"] += 1
         n += 1
     return dict(cells, n=n) if n else None
