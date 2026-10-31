@@ -1,4 +1,6 @@
-"""Ask Jev about the Kickstarter pairs (PREREG.md). Dry run by default; --send calls the API. Run again to resume."""
+"""Ask Jev about the Kickstarter pairs (PREREG.md). Dry run by default; --send calls the API. Run again to resume.
+
+Usage: python3 -I run.py [folder] [--send]. The folder holds pairs.jsonl and gets the answers (default: this folder)."""
 import importlib.util
 import json
 import os
@@ -92,4 +94,7 @@ def main(send):
 
 
 if __name__ == "__main__":
+    rest = [a for a in sys.argv[1:] if a != "--send"]
+    if rest:  # another check's folder, such as a second deadline window
+        PAIRS, ANSWERS, LOG = (os.path.join(rest[0], n) for n in ("pairs.jsonl", "answers.jsonl", "run-log.json"))
     sys.exit(main("--send" in sys.argv[1:]))

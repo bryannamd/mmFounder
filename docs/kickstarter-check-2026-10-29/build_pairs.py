@@ -1,4 +1,7 @@
-"""Kickstarter success/failure pairs for the Jev check (PREREG.md). Usage: python3 -I build_pairs.py <ks.json.gz> <out.jsonl>"""
+"""Kickstarter success/failure pairs for the Jev check (PREREG.md).
+
+Usage: python3 -I build_pairs.py <ks.json.gz> <out.jsonl> [first YYYY-MM-DD [last YYYY-MM-DD]]
+Deadlines from first (default 2026-07-01, the first check) up to, not including, last (default: no end)."""
 import collections
 import datetime
 import gzip
@@ -8,12 +11,15 @@ import math
 import re
 import sys
 
-CUT = int(datetime.datetime(2026, 7, 1, tzinfo=datetime.timezone.utc).timestamp())
 LOW, HIGH = 0.8, 1.2  # failure goal within [0.8 s, 1.2 s] of the success goal s, the rule behind the doc's count
 LEAK = re.compile(r"\bfunded\b|stretch goal|\bunlocked\b", re.I)  # words written after a campaign succeeded
 
 
-def load(path):
+def day(s):  # a UTC date as Unix seconds
+    return int(datetime.datetime.strptime(s, "%Y-%m-%d").replace(tzinfo=datetime.timezone.utc).timestamp())
+
+
+def load(path, start, end):
     seen, dups, leaks = {}, 0, collections.Counter()
     with gzip.open(path, "rt", encoding="utf-8", errors="replace") as f:
         for line in f:
@@ -22,7 +28,9 @@ def load(path):
             except (ValueError, KeyError, TypeError):
                 continue
             st, dl = d.get("state"), d.get("deadline")
-            if st not in ("successful", "failed") or not isinstance(dl, (int, float)) or dl < CUT:
+            if st not in ("successful", "failed") or not isinstance(dl, (int, float)) or dl < start:
+                continue
+            if end is not None and dl >= end:
                 continue
             name, blurb = d.get("name"), d.get("blurb")
             if not (isinstance(name, str) and name.strip() and isinstance(blurb, str) and blurb.strip()):
@@ -87,8 +95,8 @@ def most(groups):
     return total
 
 
-def main(src, out):
-    recs, dups, leaks = load(src)
+def main(src, out, first="2026-07-01", last=None):
+    recs, dups, leaks = load(src, day(first), day(last) if last else None)
     by = collections.Counter(r["state"] for r in recs)
     print("unique projects", dict(by), "duplicate records skipped", dups, "leak words removed", dict(leaks))
     month = collections.defaultdict(collections.Counter)
@@ -117,4 +125,4 @@ def main(src, out):
 
 
 if __name__ == "__main__":
-    main(*sys.argv[1:3])
+    main(*sys.argv[1:5])

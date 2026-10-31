@@ -3,3 +3,4 @@ __pycache__/
 *.pyc
 .venv/
 *.tmp
+docs/kickstarter-check-2026-10-29/**/pairs.jsonl

@@ -1,0 +1,166 @@
+{
+ "pairs": 389,
+ "scored": 389,
+ "jev": {
+  "n": 389,
+  "right": 279.5,
+  "acc": 0.7185,
+  "ci95": [
+   0.6718,
+   0.7609
+  ]
+ },
+ "sure_0.6": {
+  "n": 150,
+  "right": 132.0,
+  "acc": 0.88,
+  "ci95": [
+   0.8183,
+   0.9227
+  ]
+ },
+ "smaller_goal": {
+  "n": 389,
+  "right": 196.5,
+  "acc": 0.5051,
+  "ci95": [
+   0.4556,
+   0.5545
+  ]
+ },
+ "longer_blurb": {
+  "n": 389,
+  "right": 219.5,
+  "acc": 0.5643,
+  "ci95": [
+   0.5146,
+   0.6127
+  ]
+ },
+ "order_success_first": {
+  "n": 389,
+  "right": 159.0,
+  "acc": 0.4087,
+  "ci95": [
+   0.361,
+   0.4583
+  ]
+ },
+ "order_success_second": {
+  "n": 389,
+  "right": 351.0,
+  "acc": 0.9023,
+  "ci95": [
+   0.8688,
+   0.928
+  ]
+ },
+ "mean_p_project_1": 0.4241,
+ "answers_picking_project_1": 190,
+ "pairs_with_a_0.5_answer": 14,
+ "flipped_pairs": 185,
+ "flipped_second_slot_twice": 185,
+ "mean_chosen": 0.5931,
+ "same_sub": {
+  "n": 231,
+  "right": 165.5,
+  "acc": 0.7165,
+  "ci95": [
+   0.6552,
+   0.7707
+  ]
+ },
+ "both_ascii": {
+  "n": 244,
+  "right": 173.5,
+  "acc": 0.7111,
+  "ci95": [
+   0.6513,
+   0.7643
+  ]
+ },
+ "bins": [
+  {
+   "range": [
+    0.5,
+    0.6
+   ],
+   "mean_chosen": 0.546,
+   "n": 239,
+   "right": 147.5,
+   "acc": 0.6172,
+   "ci95": [
+    0.5541,
+    0.6765
+   ]
+  },
+  {
+   "range": [
+    0.6,
+    0.7
+   ],
+   "mean_chosen": 0.6393,
+   "n": 115,
+   "right": 100.0,
+   "acc": 0.8696,
+   "ci95": [
+    0.7959,
+    0.9193
+   ]
+  },
+  {
+   "range": [
+    0.7,
+    0.8
+   ],
+   "mean_chosen": 0.7352,
+   "n": 26,
+   "right": 23.0,
+   "acc": 0.8846,
+   "ci95": [
+    0.7102,
+    0.96
+   ]
+  },
+  {
+   "range": [
+    0.8,
+    0.9
+   ],
+   "mean_chosen": 0.8439,
+   "n": 9,
+   "right": 9.0,
+   "acc": 1.0,
+   "ci95": [
+    0.7008,
+    1.0
+   ]
+  }
+ ],
+ "post_hoc_sure_0.6": {
+  "n": 150,
+  "right": 132.0,
+  "acc": 0.88,
+  "ci95": [
+   0.8183,
+   0.9227
+  ]
+ },
+ "post_hoc_words_success_only_vs_failure_only": {
+  "edition": [
+   34,
+   11
+  ],
+  "special": [
+   14,
+   1
+  ]
+ },
+ "criteria": {
+  "1_overall_at_least_0.60": true,
+  "2_sure_at_least_0.70_with_30_pairs": true,
+  "3_beats_smaller_goal": true,
+  "3_beats_longer_blurb": true
+ },
+ "pass": true
+}

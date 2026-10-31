@@ -1,8 +1,13 @@
-"""Score the Kickstarter check against PREREG.md. Usage: python3 -I analyze.py (reads pairs.jsonl, answers.jsonl)."""
+"""Score the Kickstarter check against PREREG.md.
+
+Usage: python3 -I analyze.py [folder] [--sure 0.8]. Reads pairs.jsonl and answers.jsonl in the folder (default: this
+folder) and writes results.json there. --sure is criterion 2's probability (0.8 in the first check)."""
 import collections
 import json
 import math
 import os
+import re
+import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 EPS = 1e-9
@@ -35,10 +40,10 @@ def acc(rows, key):
     return {"n": n, "right": k, "acc": round(k / n, 4) if n else None, "ci95": [round(lo, 4), round(hi, 4)]}
 
 
-def main():
-    pairs = {d["pair"]: d for d in map(json.loads, open(os.path.join(HERE, "pairs.jsonl"), encoding="utf-8"))}
+def main(folder=HERE, sure_at=0.8):
+    pairs = {d["pair"]: d for d in map(json.loads, open(os.path.join(folder, "pairs.jsonl"), encoding="utf-8"))}
     ans = collections.defaultdict(dict)
-    for a in map(json.loads, open(os.path.join(HERE, "answers.jsonl"), encoding="utf-8")):
+    for a in map(json.loads, open(os.path.join(folder, "answers.jsonl"), encoding="utf-8")):
         ans[a["pair"]][a["order"]] = a
     rows = []
     for i, d in sorted(pairs.items()):
@@ -55,9 +60,9 @@ def main():
                      "goal": score(f["usd"] - s["usd"]), "blurb": score(len(s["blurb"]) - len(f["blurb"])),
                      "same_sub": s["sub"] == f["sub"],
                      "ascii": all(ord(ch) < 128 for ch in s["blurb"] + f["blurb"])})
-    sure = [r for r in rows if r["chosen"] >= 0.8 - EPS]
+    sure = [r for r in rows if r["chosen"] >= sure_at - EPS]
     out = {"pairs": len(pairs), "scored": len(rows),
-           "jev": acc(rows, "jev"), "sure_0.8": acc(sure, "jev"),
+           "jev": acc(rows, "jev"), "sure_%g" % sure_at: acc(sure, "jev"),
            "smaller_goal": acc(rows, "goal"), "longer_blurb": acc(rows, "blurb"),
            "order_success_first": acc(rows, "sf"), "order_success_second": acc(rows, "fs"),
            "mean_p_project_1": round(sum(r["first"] for r in rows) / len(rows), 4),
@@ -75,7 +80,8 @@ def main():
             out["bins"].append({"range": [lo, min(hi, 1.0)], "mean_chosen": round(sum(r["chosen"] for r in b) / len(b), 4),
                                 **acc(b, "jev")})
     # found after seeing the answers: never part of the verdict
-    has = lambda r, w: w in (r["name"] + " " + r["blurb"]).lower()
+    # whole words, plural included: "expedition" and "especially" do not count
+    has = lambda r, w: re.search(r"\b%ss?\b" % w, (r["name"] + " " + r["blurb"]).lower()) is not None
     out["post_hoc_sure_0.6"] = acc([r for r in rows if r["chosen"] >= 0.6 - EPS], "jev")
     out["post_hoc_words_success_only_vs_failure_only"] = {
         w: [sum(has(d["success"], w) and not has(d["failure"], w) for d in pairs.values()),
@@ -88,10 +94,13 @@ def main():
         "3_beats_smaller_goal": j > rate(rows, "goal"),
         "3_beats_longer_blurb": j > rate(rows, "blurb")}
     out["pass"] = all(out["criteria"].values())
-    with open(os.path.join(HERE, "results.json"), "w", encoding="utf-8") as fh:
+    with open(os.path.join(folder, "results.json"), "w", encoding="utf-8") as fh:
         json.dump(out, fh, indent=1)
     print(json.dumps(out, indent=1))
 
 
 if __name__ == "__main__":
-    main()
+    a = sys.argv[1:]
+    sure_at = float(a.pop(a.index("--sure") + 1)) if "--sure" in a else 0.8
+    rest = [x for x in a if x != "--sure"]
+    main(rest[0] if rest else HERE, sure_at)
